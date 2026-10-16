@@ -1,0 +1,8 @@
+// 扩展的严格类型检查配置，继承框架生成的浏览器类型。
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "jsx": "react-jsx"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "_comment": "BiliBuff 扩展的依赖和开发、验证、打包命令。",
+  "name": "bilibuff-extension",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "wxt",
+    "dev:edge": "wxt -b edge",
+    "build": "wxt build",
+    "build:edge": "wxt build -b edge",
+    "zip": "wxt zip",
+    "zip:edge": "wxt zip -b edge",
+    "prepare": "wxt prepare",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run",
+    "test:offline": "node --test tests/offline.test.mjs",
+    "check:syntax": "node scripts/check-syntax.cjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "dependencies": {
+    "@ai-sdk/deepseek": "3.0.66",
+    "@ai-sdk/openai-compatible": "3.0.70",
+    "@streamdown/cjk": "1.0.4",
+    "ai": "7.0.142",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "streamdown": "2.7.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@wxt-dev/module-react": "1.2.2",
+    "eslint": "10.12.0",
+    "fake-indexeddb": "6.2.5",
+    "prettier": "^3.0.0",
+    "shadcn": "4.22.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "8.71.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4",
+    "wxt": "0.21.4"
+  }
+}

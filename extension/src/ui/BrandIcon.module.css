@@ -1,0 +1,53 @@
+/* 小电视的眨眼、轻跳、张望、眯眼和天线动画，只通过姿态与表情变化呈现。 */
+.icon { overflow: visible; }
+.closedEyes, .happyEyes { opacity: 0; }
+.leftAntenna { transform-box: view-box; transform-origin: 10px 7px; }
+.rightAntenna { transform-box: view-box; transform-origin: 14px 7px; }
+.blink .eyes { animation: blinkOpen 1s linear; }
+.blink .closedEyes { animation: blinkClosed 1s linear; }
+.hop { animation: hop 1s ease-in-out; }
+.look .eyes { animation: look 1s ease-in-out; }
+.happy .eyes { animation: happyOpen 1s linear; }
+.happy .happyEyes { animation: happyClosed 1s linear; }
+.antenna .leftAntenna { animation: antennaLeft 1s ease-in-out; }
+.antenna .rightAntenna { animation: antennaRight 1s ease-in-out; }
+
+@keyframes blinkOpen {
+  0%, 19%, 31%, 100% { opacity: 1; }
+  20%, 30% { opacity: 0; }
+}
+@keyframes blinkClosed {
+  0%, 19%, 31%, 100% { opacity: 0; }
+  20%, 30% { opacity: 1; }
+}
+@keyframes hop {
+  0%, 12%, 45%, 75%, 100% { transform: translateY(0); }
+  28% { transform: translateY(-4px); }
+  60% { transform: translateY(-2px); }
+}
+@keyframes look {
+  0%, 100% { transform: translateX(0); }
+  20%, 35% { transform: translateX(-1px); }
+  60%, 75% { transform: translateX(1px); }
+}
+@keyframes happyOpen {
+  0%, 14%, 81%, 100% { opacity: 1; }
+  15%, 80% { opacity: 0; }
+}
+@keyframes happyClosed {
+  0%, 14%, 81%, 100% { opacity: 0; }
+  15%, 80% { opacity: 1; }
+}
+@keyframes antennaLeft {
+  0%, 80%, 100% { transform: rotate(0deg); }
+  20%, 55% { transform: rotate(-10deg); }
+  38%, 68% { transform: rotate(7deg); }
+}
+@keyframes antennaRight {
+  0%, 80%, 100% { transform: rotate(0deg); }
+  20%, 55% { transform: rotate(10deg); }
+  38%, 68% { transform: rotate(-7deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon, .icon * { animation: none !important; }
+}

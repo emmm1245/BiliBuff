@@ -1,0 +1,5 @@
+# 排除框架生成文件和依赖目录。
+.wxt
+.output
+node_modules
+pnpm-lock.yaml

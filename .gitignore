@@ -1,0 +1,43 @@
+# 排除依赖、生成产物、敏感配置和本机临时文件，保留源码、文档及依赖锁文件。
+
+# 依赖和包管理器缓存
+node_modules/
+.pnpm-store/
+
+# 扩展构建、类型检查和测试产物
+.wxt/
+.output/
+.artifacts/
+dist/
+build/
+coverage/
+.cache/
+.eslintcache
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# 日志和本机环境配置
+*.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 编辑器和操作系统临时文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 根目录误生成的空文件
+/console.log(JSON.stringify(m.exports

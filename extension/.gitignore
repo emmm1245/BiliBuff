@@ -1,0 +1,4 @@
+# 排除依赖和生成产物，依赖锁文件应提交。
+node_modules/
+.wxt/
+.output/

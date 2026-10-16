@@ -1,0 +1,86 @@
+/* 设置页的哔哩哔哩配色、系统主题和基础表单样式。 */
+@import '../home-theme.css';
+:root {
+  font: 14px/1.65 "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --page: #f6f7f8;
+  --surface: #fff;
+  --field: #f6f7f8;
+  --text: #18191c;
+  --muted: #61666d;
+  --subtle: #9499a0;
+  --border: #e3e5e7;
+  --hover: #f1f2f3;
+  --accent: #008ac5;
+  --blue: #00aeec;
+  --blue-soft: #dff6fd;
+  --pink: #d94b7d;
+  --pink-soft: #ffecf1;
+  --warning: #996000;
+  --warning-bg: #fff8e8;
+  --warning-border: #f1d59c;
+  --focus: #00aeec;
+  background: var(--page);
+  color: var(--text);
+}
+:root[data-theme=dark] {
+  color-scheme: dark;
+  --page: #101011;
+  --surface: #17181a;
+  --field: #1e2022;
+  --text: #e7e9eb;
+  --muted: #a2a7ae;
+  --subtle: #8b9097;
+  --border: #2f3134;
+  --hover: #232527;
+  --accent: #58b1d4;
+  --blue: #0087bd;
+  --blue-soft: #0b202a;
+  --pink: #ed80a3;
+  --pink-soft: #2f1a22;
+  --warning: #e7b659;
+  --warning-bg: #2b2418;
+  --warning-border: #65502d;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]):not([data-theme=dark]) {
+    color-scheme: dark;
+    --page: #101011;
+    --surface: #17181a;
+    --field: #1e2022;
+    --text: #e7e9eb;
+    --muted: #a2a7ae;
+    --subtle: #8b9097;
+    --border: #2f3134;
+    --hover: #232527;
+    --accent: #58b1d4;
+    --blue: #0087bd;
+    --blue-soft: #0b202a;
+    --pink: #ed80a3;
+    --pink-soft: #2f1a22;
+    --warning: #e7b659;
+    --warning-bg: #2b2418;
+    --warning-border: #65502d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); transition: background .15s, border-color .15s, color .15s; }
+button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--blue-soft); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+input:not([type=checkbox]), textarea, select { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; color: var(--text); background: var(--field); }
+input::placeholder, textarea::placeholder { color: var(--subtle); }
+input:hover, textarea:hover, select:hover { border-color: var(--subtle); }
+textarea { display: block; resize: vertical; min-height: 76px; }
+input[type=checkbox] { accent-color: var(--blue); width: 17px; height: 17px; vertical-align: middle; margin: 0 8px 0 0; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { font-size: 28px; line-height: 1.4; margin-bottom: 10px; font-weight: 600; }
+h2 { font-size: 18px; font-weight: 600; margin-bottom: 10px; }
+h3 { font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+p { color: var(--muted); margin-bottom: 16px; }
+small { font-size: 13px; color: var(--muted); }
+a { color: var(--accent); }
+svg { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
