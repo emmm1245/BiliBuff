@@ -1,4 +1,5 @@
 // 提供独立的调试日志开关、下载和清除操作，并显示本机记录数量。
+import { Button } from './primitives/button';
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { DEBUG_ENABLED_KEY } from '../ai-debug';
@@ -12,7 +13,7 @@ export function DebugLogs() {
   useEffect(() => {
     let alive = true;
     const refresh = () => {
-      void send<{ enabled: boolean; count: number }>({ type: 'debug-state' }).then(value => {
+      void send({ type: 'debug-state' }).then(value => {
         if (alive) setState(value);
       }, error => { if (alive) setStatus(error.message); });
     };
@@ -42,8 +43,8 @@ export function DebugLogs() {
       onChange={event => { const enabled = event.target.checked; void act(async () => { await send({ type: 'debug-toggle', enabled }); setStatus(enabled ? '调试日志已开启。' : '调试日志已关闭，已有日志保留。'); }); }} />开启调试日志</label>
     <p>记录 AI 请求、回复和错误，仅保存在本机，不含密钥。可能包含计划、观看记录和评论，分享前请检查。</p>
     <div className={styles.row}><span>{state ? `已记录 ${state.count} 条` : '正在读取日志…'}</span>
-      <button disabled={!state?.count || busy} onClick={() => void act(download)}>下载日志</button>
-      <button disabled={!state || busy} onClick={() => void act(async () => { await send({ type: 'debug-clear' }); setStatus('调试日志已清除。'); })}>清除日志</button>
+      <Button disabled={!state?.count || busy} onClick={() => void act(download)}>下载日志</Button>
+      <Button disabled={!state || busy} onClick={() => void act(async () => { await send({ type: 'debug-clear' }); setStatus('调试日志已清除。'); })}>清除日志</Button>
     </div>{status && <p role="status">{status}</p>}
   </details>;
 }

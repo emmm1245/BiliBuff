@@ -11,6 +11,17 @@
 .nav button { display: flex; align-items: center; gap: 14px; padding: 13px 16px; text-align: left; background: transparent; border-color: transparent; border-radius: 8px; color: var(--muted); }
 .nav button:hover:not(:disabled) { border-color: transparent; }
 .nav .active { background: var(--blue-soft); color: var(--accent); font-weight: 600; }
+.navHint { margin: 0; padding: 0 4px; font-size: 11px; color: var(--muted); }
+.navItem { display: flex; align-items: center; min-width: 0; border-radius: 8px; }
+.nav .navLink { flex: 1; min-width: 0; justify-content: flex-start; gap: 10px; padding-inline: 12px; cursor: grab; }
+.navLink:active { cursor: grabbing; }
+.navLink svg { flex-shrink: 0; }
+.navTitle { flex: 1; text-align: left; }
+.navGrip { display: inline-flex; flex-shrink: 0; color: var(--subtle); transition: color .15s; }
+.nav .navGrip svg { width: 14px; height: 18px; }
+.navLink:hover .navGrip { color: var(--accent); }
+.navDragging { opacity: .45; outline: 1px dashed var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .navGrip { transition: none; } }
 .sidebarBottom { margin-top: auto; padding: 32px 4px 0; }
 .sidebarBottom p { margin: 24px 0 3px; font-size: 12px; }
 .sidebarBottom > small { color: var(--subtle); font-size: 11px; }
@@ -26,7 +37,7 @@
 .saveBadge svg { width: 16px; height: 16px; color: var(--accent); }
 .saveWarning, .saveWarning svg { color: var(--warning); }
 .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-.card { min-width: 0; padding: 26px 28px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin-bottom: 20px; }
+.card { display: block; min-width: 0; padding: 26px 28px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin-bottom: 20px; }
 .card > p { font-size: 14px; }
 .card > :last-child { margin-bottom: 0; }
 .cardTitle { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -86,6 +97,9 @@
 .removeAction { color: var(--pink); background: var(--pink-soft); }
 .formGrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
 .formGrid label { display: grid; gap: 8px; align-content: start; }
+.densityOption { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); }
+.densityOption:has(input:checked) { color: var(--accent); background: var(--blue-soft); border-color: var(--blue); }
+.densityOption input[type=radio] { appearance: auto; width: 16px; height: 16px; padding: 0; margin: 0; border: 0; background: none; accent-color: var(--blue); }
 .settingsGroup { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
 .settingsGroup p { font-size: 14px; }
 .sectionHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -111,9 +125,10 @@ p.notice { margin: 14px 0 20px; }
 .providerList { display: grid; gap: 12px; }
 .provider { min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
 .provider > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 14px 16px; cursor: pointer; background: var(--field); border-radius: 8px; }
-.provider > summary > span { font-weight: 600; }
-.provider > summary > span::before { content: '›'; display: inline-block; margin-right: 10px; color: var(--muted); }
-.provider[open] > summary > span::before { transform: rotate(90deg); }
+.provider > summary > span { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; }
+.providerLogo { width: 20px; height: 20px; flex: none; }
+.providerChevron { flex: none; color: var(--muted); }
+.provider[open] > summary .providerChevron { transform: rotate(90deg); }
 .providerBody { padding: 18px 16px; }
 .providerBody > p { font-size: 14px; }
 .providerBody .row { align-items: baseline; }
@@ -138,6 +153,7 @@ p.notice { margin: 14px 0 20px; }
   .navLabel, .sidebarBottom > p, .sidebarBottom > small, .themePicker > span { display: none; }
   .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; order: 3; width: 100%; margin-top: 0; } .nav button { padding: 10px 12px; gap: 8px; }
   .navGroup { display: contents; }
+  .navHint { grid-column: 1 / -1; }
   .sidebarBottom { margin: 0 0 0 auto; padding: 0; }
   .main { padding: 30px 24px 36px; } .footer { margin: 0 24px; }
 }

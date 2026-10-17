@@ -1,4 +1,6 @@
 // 在数据与维护页展示本地存储估算用量和权限状态。
+import { Button } from './primitives/button';
+import { Card } from './primitives/card';
 import { useEffect, useState } from 'react';
 import { formatStorageBytes, readStorageUsage, type StorageUsage as Usage } from '../storage-usage';
 import styles from './App.module.css';
@@ -19,7 +21,7 @@ export function StorageUsage() {
     return () => { alive = false; window.removeEventListener('focus', refresh); };
   }, [refreshId]);
 
-  return <section className={styles.card} aria-busy={loading}><h2>本地存储</h2>
+  return <Card className={styles.card} aria-busy={loading}><h2>本地存储</h2>
     {usage && <>
       <div className={`${styles.stats} ${styles.storageStats}`}>
         <div><small>估算合计</small><strong>{usage.databaseBytes === null ? '暂不可用' : formatStorageBytes(usage.localBytes + usage.databaseBytes)}</strong></div>
@@ -29,7 +31,7 @@ export function StorageUsage() {
       {!usage.unlimited && <p className={styles.banner}>存储权限尚未生效，请更新并重新加载扩展。</p>}
     </>}
     <p>用量为浏览器估算值，更新可能稍有延迟。</p>
-    <div className={styles.row}><button disabled={loading} onClick={() => setRefreshId(value => value + 1)}>{loading ? '正在读取…' : '刷新用量'}</button></div>
+    <div className={styles.row}><Button disabled={loading} onClick={() => setRefreshId(value => value + 1)}>{loading ? '正在读取…' : '刷新用量'}</Button></div>
     {error && <p role="alert">存储用量读取失败：{error}</p>}
-  </section>;
+  </Card>;
 }

@@ -120,10 +120,11 @@ test('手动分析使用所选兼容服务、独立密钥和模型，不携带 D
   const turn = await analyze(value, value.settings, new AbortController().signal, () => {});
   const [url, options] = fetch.mock.calls[0]!;
   expect(url).toBe('https://custom.example/v1/chat/completions');
-  expect(options.headers.Authorization).toBe('Bearer custom-secret');
+  expect(new Headers(options.headers).get('authorization')).toBe('Bearer custom-secret');
   const body = JSON.parse(options.body);
   expect(body).toMatchObject({ model: 'my-model', max_tokens: 4096, stream: true });
-  for (const field of ['thinking', 'reasoning_effort', 'response_format']) expect(body).not.toHaveProperty(field);
+  for (const field of ['thinking', 'reasoning_effort']) expect(body).not.toHaveProperty(field);
+  expect(body.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true } });
   for (const secret of ['custom-secret', 'test-key', 'custom.example']) expect(options.body).not.toContain(secret);
   expect(turn).toMatchObject({ kind: 'result', result: { ai: { providerId: 'custom-test', model: 'my-model' } } });
 });

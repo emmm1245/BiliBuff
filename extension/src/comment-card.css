@@ -7,6 +7,8 @@ details { border:1px solid var(--border); border-radius:10px; background:var(--s
 summary { display:flex; align-items:center; gap:8px; cursor:grab; touch-action:none; user-select:none; padding:12px 14px; list-style:none; }
 summary:active { cursor:grabbing; }
 .grip { color:var(--muted); }
+.grip, .chevron { display:inline-flex; flex:none; }
+.reference svg, .source svg { vertical-align:-2px; }
 summary::-webkit-details-marker { display:none; }
 summary strong { font-size:14px; font-weight:600; }
 .badge { margin-left:auto; color:var(--accent); font-size:12px; }

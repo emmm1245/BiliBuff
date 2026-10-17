@@ -1,4 +1,4 @@
-// 使用现有 Node 独立验证扩展核心规则、备份、权限与计时，不安装依赖、不访问网络。
+// 使用现有 Node 独立验证扩展核心规则、备份、权限与计时，使用已安装的校验依赖、不访问网络。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '../src/core.ts';
@@ -50,8 +50,8 @@ test('网页脚本不能读取计划、密钥和累计样本', () => {
   assert.equal(mayAccess('export', { id, url: options }, id, options), true);
   assert.equal(mayAccess('rules', { ...sender, url: 'https://www.bilibili.com.evil.invalid/' }, id, options), false);
 });
-test('模型截断、思考过程、无效结构都不保存，旧建议仍按新增兼容', () => {
-  for (const response of [{}, { choices: [{ finish_reason: 'length', message: { content: '{}' } }] }, { choices: [{ finish_reason: 'stop', message: { content: '', reasoning_content: 'thinking' } }] }]) assert.throws(() => core.parseAnalysisResponse(response));
+test('建议结构不完整时拒绝采用，旧建议仍按新增兼容', () => {
+  for (const response of [{}, { choices: [{ finish_reason: 'length', message: { content: '{}' } }] }, { choices: [{ finish_reason: 'stop', message: { content: '', reasoning_content: 'thinking' } }] }]) assert.throws(() => core.validateSuggestions(response));
   const settings = core.migrateSettings(); const merged = core.mergeSuggestions(settings, [{ side: 'positive', field: 'text', word: '数学', reason: '依据' }]);
   assert.deepEqual(merged.positive.text, ['数学']); assert.deepEqual(settings.positive.text, []);
 });

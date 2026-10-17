@@ -38,6 +38,3 @@ test-results/
 .DS_Store
 Thumbs.db
 Desktop.ini
-
-# 根目录误生成的空文件
-/console.log(JSON.stringify(m.exports

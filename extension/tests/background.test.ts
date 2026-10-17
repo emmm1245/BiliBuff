@@ -7,7 +7,7 @@ import type { Backup, Message, Preferences, VideoEvent } from '../src/types';
 const mocks = vi.hoisted(() => ({
   browser: { storage: { local: { setAccessLevel: vi.fn(), get: vi.fn(), set: vi.fn() }, onChanged: { addListener: vi.fn() } },
     runtime: { id: 'test', getURL: () => 'chrome-extension://test/options.html', onMessage: { addListener: vi.fn() }, openOptionsPage: vi.fn() },
-    tabs: { query: vi.fn(), sendMessage: vi.fn() }, action: { onClicked: { addListener: vi.fn() } }, downloads: { onChanged: { addListener: vi.fn() } } },
+    tabs: { query: vi.fn(), sendMessage: vi.fn(), create: vi.fn() }, action: { onClicked: { addListener: vi.fn() } }, downloads: { onChanged: { addListener: vi.fn() } } },
   reviewer: { request: vi.fn(), invalidate: vi.fn(), error: () => '' },
   mergeEvents: vi.fn(), samples: vi.fn(),
   requestSuggestions: vi.fn(),
@@ -42,14 +42,17 @@ async function request(message: Message, url = 'chrome-extension://test/options.
 test('评论流式进度只推送到发起标签页的主框架，断流保留失败响应', async () => {
   preferences.apiKey = 'test';
   const raw = `data: ${JSON.stringify({ choices: [{ delta: { content: '{"summary":"正在生成总览' } }] })}\n\n`;
-  vi.stubGlobal('fetch',vi.fn(async () => new Response(raw)));
-  const response = await new Promise<{ ok: boolean; error?: string }>(resolve => listener({ type: 'comments-analyze', requestId: 'stream-tab',
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal('fetch',vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode(raw)); } }))));
+  const task = new Promise<{ ok: boolean; error?: string }>(resolve => listener({ type: 'comments-analyze', requestId: 'stream-tab',
     source: { bvid: 'BVtest', oid: '123', title: '示例视频' }, total: 1,
     comments: [{ id: '123456789012', root: '0', parent: '0', text: '评论正文', author: '甲', likes: 0, time: 1, replies: 0 }] },
   { id: 'test', url: 'https://www.bilibili.com/video/BVtest', frameId: 0, tab: { id: 42 } },resolve));
+  await vi.waitFor(() => expect(mocks.browser.tabs.sendMessage).toHaveBeenCalled());
+  stream.close(); const response = await task;
   expect(response).toMatchObject({ ok: false, error: expect.stringContaining('连接中断') });
   expect(mocks.browser.tabs.sendMessage).toHaveBeenCalledExactlyOnceWith(42,
-    { type: 'comments-progress', requestId: 'stream-tab', bvid: 'BVtest', summary: '正在生成总览', thinking: false },{ frameId: 0 });
+    { type: 'comments-progress', requestId: 'stream-tab', bvid: 'BVtest', summary: '正在生成总览', thinking: false, partial: { summary: '正在生成总览' } },{ frameId: 0 });
   expect(mocks.browser.tabs.query).not.toHaveBeenCalled();
 });
 
@@ -209,4 +212,16 @@ test('无密钥备份只为同标识同地址保留密钥，显式空密钥删�
   const settings = { ...preferences.settings, providers: preferences.settings.providers.slice(0, 1) };
   expect(await request({ type: 'save', settings, revision: preferences.revision })).toMatchObject({ ok: true });
   expect(preferences.providerKeys).toEqual({});
+});
+
+
+test('网页密度选择持久保存到统一设置，后台重建后恢复且保留其他配置', async () => {
+  const before = structuredClone(preferences);
+  const result = await request({ type: 'video-density', density: 'concise' },'https://www.bilibili.com/video/BVtest');
+  expect(result).toEqual({ ok: true, value: 'concise' });
+  expect(preferences.settings.videoAssistant.chapterDensity).toBe('concise');
+  expect(preferences.settings.videoAssistant.chapterRanges).toEqual(before.settings.videoAssistant.chapterRanges);
+  expect(preferences.decisionApiKey).toBe(before.decisionApiKey); expect(preferences.revision).toBe(before.revision+1);
+  entry.main();
+  expect((await request({ type: 'rules' },'https://www.bilibili.com/video/BVtest')).value).toMatchObject({ videoAssistant: { chapterDensity: 'concise' } });
 });

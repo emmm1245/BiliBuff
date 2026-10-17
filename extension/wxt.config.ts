@@ -1,8 +1,10 @@
 // 定义 Chrome 与 Edge 扩展构建、界面模块和最小站点权限。
 import { defineConfig } from 'wxt';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({ plugins: [tailwindcss()] }),
   manifestVersion: 3,
   webExt: { disabled: true },
   manifest: {

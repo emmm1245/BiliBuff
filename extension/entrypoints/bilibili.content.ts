@@ -3,7 +3,6 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { send } from '../src/client';
 import { startContent } from '../src/content';
 import { isListPlayback } from '../src/core';
-import type { ContentSettings } from '../src/types';
 
 export default defineContentScript({
   matches: ['https://www.bilibili.com/*'],
@@ -33,7 +32,7 @@ export default defineContentScript({
       });
     }
     if (ctx.isInvalid) return;
-    const settings = await send<ContentSettings>({ type: 'rules' });
+    const settings = await send({ type: 'rules' });
     if (ctx.isInvalid) return;
     const stop = startContent(settings);
     ctx.onInvalidated(stop);

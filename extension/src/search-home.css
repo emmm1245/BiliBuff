@@ -119,8 +119,8 @@ button:focus-visible { outline: 2px solid rgb(251 114 153 / 80%); outline-offset
 .history-remove { flex-shrink: 0; padding: 7px 8px; color: var(--home-muted); }
 .history-remove:hover { color: var(--home-quote); }
 .suggest-word { position: relative; display: block; width: 100%; padding: clamp(5px, 1svh, 9px) 36px clamp(5px, 1svh, 9px) 12px; border-radius: 10px; font-size: 14px; text-align: left; overflow-wrap: anywhere; box-shadow: inset 0 0 0 1px transparent, 0 0 8px transparent, 0 0 18px transparent; transition: color .16s, background-color .16s, box-shadow .18s; }
-.suggest-word::after { content: ""; position: absolute; top: 50%; right: 16px; width: 6px; height: 6px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; opacity: 0; transform: translate(-3px, -50%) rotate(45deg); transition: opacity .16s, transform .16s; }
-.suggest-word:hover::after, .suggest-word[aria-selected=true]::after { opacity: .6; transform: translate(0, -50%) rotate(45deg); }
+.suggest-word > svg { position: absolute; top: 50%; right: 12px; width: 16px; height: 16px; opacity: 0; transform: translate(-3px, -50%); transition: opacity .16s, transform .16s; }
+.suggest-word:hover > svg, .suggest-word[aria-selected=true] > svg { opacity: .6; transform: translate(0, -50%); }
 .suggest-word:hover, .suggest-word[aria-selected=true] { color: var(--home-hover-text); background: var(--home-hover-bg); }
 .suggest-word[aria-selected=true] { box-shadow: inset 0 0 0 1px rgb(251 114 153 / 80%), 0 0 8px rgb(251 114 153 / 40%), 0 0 18px rgb(251 114 153 / 26%); }
 .history-word[aria-selected=true] { color: var(--home-hover-text); }
@@ -141,4 +141,6 @@ button:focus-visible { outline: 2px solid rgb(251 114 153 / 80%); outline-offset
   .settings { right: 14px; bottom: 14px; }
 }
 @media (max-width: 600px), (max-height: 620px) { .search-hints { display: none; } }
-@media (prefers-reduced-motion: reduce) { .search-box, .search-icon, .submit, .submit svg, .search-area, .logo, .quote, .history-item, .history-word, .history-remove, .suggest-word, .suggest-word::after, .clear-history { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .search-box, .search-icon, .submit, .submit svg, .search-area, .logo, .quote, .history-item, .history-word, .history-remove, .suggest-word, .suggest-word > svg, .clear-history { transition: none; } }
+
+.history-remove svg { width: 14px; height: 14px; vertical-align: middle; }

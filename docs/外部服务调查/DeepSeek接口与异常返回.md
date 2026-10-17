@@ -24,7 +24,7 @@
 
 扩展区分缺少结果、生成达到上限、非正常结束、只有思考过程、空正式结果与无效结构；失败时不保存新建议。正式输出需要完整接收并通过结构检查，思考过程不能作为建议正文。
 
-实现依据：[模型输出校验](../../extension/src/core.ts)与[流式响应处理](../../extension/src/analysis-stream.ts)。当前生成参数和等待规则见[AI服务与计划分析](../使用指南/AI服务与计划分析.md)，请求排查见[调试日志](../使用指南/调试日志.md)。
+实现依据：[模型输出校验](../../extension/src/core.ts)与[SDK调用与响应校验](../../extension/src/ai-request.ts)。当前生成参数和等待规则见[AI服务与计划分析](../使用指南/AI服务与计划分析.md)，请求排查见[调试日志](../使用指南/调试日志.md)。
 
 官方依据：[生成接口及思考模式默认值](https://api-docs.deepseek.com/api/create-chat-completion/)、[思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)。
 

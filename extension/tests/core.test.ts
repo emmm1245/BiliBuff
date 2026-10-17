@@ -1,6 +1,6 @@
 // 验证扩展规则、播放计时、模型输出和旧版备份兼容性。
 import { expect, test } from 'vitest';
-import { classify, currentSettings, isListPlayback, MAX_WALLPAPER_BYTES, mergeSuggestions, migrateSettings, modelParameters, parseAnalysisResponse, parseDuration, parseWords, playbackBvid, playbackSeconds, requiresTags, validateBackup, validateClarification, validatePlan, validateSettings, validateSuggestions } from '../src/core';
+import { classify, currentSettings, isListPlayback, MAX_WALLPAPER_BYTES, mergeSuggestions, migrateSettings, modelParameters, parseDuration, parseWords, playbackBvid, playbackSeconds, requiresTags, validateBackup, validateClarification, validatePlan, validateSettings, validateSuggestions } from '../src/core';
 
 test('留白默认关闭，旧配置与备份兼容，自选壁纸可以保存、备份和恢复', () => {
   const { homeSearch, homeWallpaper, ...old } = migrateSettings();
@@ -102,11 +102,6 @@ test('过滤原因说明匹配来源和词条，区分严格模式与标签失�
   expect(classify('日常', [], settings).reason).toBe('严格模式：未命中偏好内容');
   expect(classify('日常', [], settings, 'failed').reason).toContain('标签获取失败');
 });
-test('模型截断、空回答和错误 JSON 不保存', () => {
-  for (const response of [{}, { choices: [{ finish_reason: 'length', message: { content: '{}' } }] },
-    { choices: [{ finish_reason: 'stop', message: { content: '', reasoning_content: 'thinking' } }] },
-    { choices: [{ finish_reason: 'stop', message: { content: 'invalid' } }] }]) expect(() => parseAnalysisResponse(response)).toThrow();
-});
 test('建议仅增量添加，保持原草稿和开关', () => {
   const settings = migrateSettings({ topics: '数学' });
   const merged = mergeSuggestions(settings, [{ side: 'negative', field: 'tags', word: '游戏', reason: '依据' }]);
@@ -206,4 +201,26 @@ test('阿里云空间标识支持 ws 和 llm 前缀，保存和备份保留原�
   for (const workspaceId of ['ws-', 'ws-abc.evil', 'ws-abc/path', 'ws-abc@evil', 'ws-abc\n', 'https://ws-abc.cn-beijing.maas.aliyuncs.com']) {
     expect(() => validateSettings({ ...migrateSettings(), review: { ...migrateSettings().review, workspaceId } })).toThrow();
   }
+});
+
+
+test('旧视频设置补齐适中章节密度，三档选择随备份保留，非法值拒绝保存', () => {
+  const settings = migrateSettings(), { chapterDensity, ...video } = settings.videoAssistant;
+  expect(chapterDensity).toBe('balanced');
+  expect(validateSettings({ ...settings, videoAssistant: video }).videoAssistant.chapterDensity).toBe('balanced');
+  for (const density of ['concise','balanced','detailed'] as const) {
+    const saved = validateSettings({ ...settings, videoAssistant: { ...video, chapterDensity: density } });
+    expect(validateBackup({ format: 'bilibili-focus-backup', version: 1, settings: saved, plan: '', events: [], result: null }).settings.videoAssistant.chapterDensity).toBe(density);
+  }
+  expect(() => validateSettings({ ...settings, videoAssistant: { ...video, chapterDensity: 'invalid' } })).toThrow('章节密度');
+});
+
+
+test('三档章节范围补齐默认值、自定义范围随备份保留，拒绝上下限倒置', () => {
+  const settings = migrateSettings(), { chapterRanges, ...old } = settings.videoAssistant;
+  expect(chapterRanges).toEqual({ concise: { min: 2, max: 3 }, balanced: { min: 3, max: 6 }, detailed: { min: 5, max: 12 } });
+  expect(validateSettings({ ...settings, videoAssistant: old }).videoAssistant.chapterRanges).toEqual(chapterRanges);
+  const saved = validateSettings({ ...settings, videoAssistant: { ...settings.videoAssistant, chapterRanges: { ...chapterRanges, concise: { min: 1, max: 4 } } } });
+  expect(validateBackup({ format: 'bilibili-focus-backup', version: 1, settings: saved, plan: '', events: [], result: null }).settings.videoAssistant.chapterRanges.concise).toEqual({ min: 1, max: 4 });
+  for (const range of [{ min: 4, max: 3 },{ min: 0, max: 3 },{ min: 1.5, max: 3 }]) expect(() => validateSettings({ ...settings, videoAssistant: { ...settings.videoAssistant, chapterRanges: { ...chapterRanges, concise: range } } })).toThrow('上下限');
 });

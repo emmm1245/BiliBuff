@@ -1,5 +1,9 @@
-// 解析视频模型容量、生成参数与输入预算，为字幕和摘要使用同一分段尺度。
-import type { VideoEffort, VideoSelection } from './video-types';
+// 解析视频模型容量、生成参数、输入预算和三档内容章节数量要求。
+import type { ChapterDensity, ChapterRange, VideoAssistantOptions, VideoEffort, VideoSelection } from './video-types';
+export function defaultVideoOptions(selection: VideoSelection = { providerId: 'deepseek', model: 'deepseek-flash' }): VideoAssistantOptions {
+  const defaults = { ...selection, effort: selection.effort ?? videoEfforts(selection)[0]!, maxTokens: selection.maxTokens ?? 8192, contextTokens: selection.contextTokens ?? 0 };
+  return { chapterDensity: 'balanced', chapterRanges: { concise: { min: 2, max: 3 }, balanced: { min: 3, max: 6 }, detailed: { min: 5, max: 12 } }, autoSummary: false, autoChapters: false, autoSkipAds: false, summary: { ...defaults }, chapters: { ...defaults }, chat: { ...defaults } };
+}
 export function videoModel(selection: VideoSelection) {
   const model = selection.model.trim().toLowerCase();
   // 容量来自官方模型文档；只匹配确认过的型号，未知别名使用256k。
@@ -34,12 +38,20 @@ export function videoContext(selection: VideoSelection) { return selection.conte
 export function videoInputBudget(selection: VideoSelection) {
   return Math.floor(videoContext(selection) * 0.8) - (selection.maxTokens ?? 8192) - 4096;
 }
-export function videoParameters(selection: VideoSelection) {
+export function videoParameters(selection: VideoSelection, structured = true) {
   const effort = selection.effort ?? videoEfforts(selection)[0]!;
   const kind = videoModel(selection).reasoning, output = selection.maxTokens ?? 8192;
   if (selection.providerId === 'deepseek' || kind === 'deepseek') return { max_tokens: output,
     thinking: { type: effort === 'off' ? 'disabled' : 'enabled' },
-    ...(effort === 'off' ? {} : { reasoning_effort: effort }), response_format: { type: 'json_object' } };
+    ...(effort === 'off' ? {} : { reasoning_effort: effort }), ...(structured ? { response_format: { type: 'json_object' } } : {}) };
   return { ...(kind === 'openai' ? { max_completion_tokens: output } : { max_tokens: output }),
     ...(effort === 'default' ? {} : { reasoning_effort: effort === 'off' ? 'none' : effort === 'max' ? 'xhigh' : effort }) };
+}
+
+export function chapterDensityInstruction(density: ChapterDensity, range: ChapterRange) {
+  const modes = { concise: { label: '精简', rule: '只保留主要话题，合并连续的小知识点，避免频繁分段' },
+    balanced: { label: '适中', rule: '按明确的话题转换划分，兼顾完整性与阅读效率' },
+    detailed: { label: '详细', rule: '细分重要知识点、步骤和示例，方便精确定位' } };
+  const mode = modes[density];
+  return `章节密度：${mode.label}。${mode.rule}。整段视频的非广告内容章节偏好区间为${range.min}–${range.max}个（下限${range.min}个、上限${range.max}个），尽量遵循，广告章节另算；内容完整和语义连贯优先于数量，不必为凑数强行拆分或合并。字幕行不足时内容章节数不超过非广告字幕行数。明确商业广告仍须单独分段，不为减少章节数将广告混入正文。数量偏好不能成为遗漏字幕的理由。`;
 }

@@ -2,6 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import { App } from '../../src/ui/App';
 import { initializeTheme } from '../../src/ui/ThemePicker';
+import '../../src/ui/library.css';
 import '../../src/ui/base.css';
 
 initializeTheme();

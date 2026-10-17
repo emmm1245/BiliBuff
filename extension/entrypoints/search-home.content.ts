@@ -4,13 +4,13 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { send } from '../src/client';
 import { createSearchHome } from '../src/search-home';
 import type { ContentSettings } from '../src/types';
-import { parseTheme, type Theme } from '../src/theme';
+import { parseTheme } from '../src/theme';
 
 export default defineContentScript({
   matches: ['https://www.bilibili.com/*'],
   runAt: 'document_start',
   main(ctx) {
-    const home = createSearchHome(() => send({ type: 'open-settings' }), term => send<string[]>({ type: 'suggest', term }));
+    const home = createSearchHome(() => send({ type: 'open-settings' }), term => send({ type: 'suggest', term }));
     let settings: ContentSettings | undefined;
     let epoch = 0;
     let themeEpoch = 0;
@@ -18,7 +18,7 @@ export default defineContentScript({
     async function refresh() {
       const request = ++epoch;
       try {
-        const latest = await send<ContentSettings>({ type: 'rules' });
+        const latest = await send({ type: 'rules' });
         if (ctx.isInvalid || request !== epoch) return;
         settings = latest;
         update();
@@ -27,7 +27,7 @@ export default defineContentScript({
     async function refreshTheme() {
       const request = ++themeEpoch;
       try {
-        const theme = await send<Theme>({ type: 'theme' });
+        const theme = await send({ type: 'theme' });
         if (!ctx.isInvalid && request === themeEpoch) home.setTheme(parseTheme(theme));
       } catch { /* 暂时无法读取选择时，首页保持系统主题。 */ }
     }

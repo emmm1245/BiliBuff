@@ -1,6 +1,24 @@
 // 提供字幕导出、章节校验、完整输入分块及视频工作台的纯数据处理。
-import type { SubtitleRow, VideoCache, VideoChapter } from './video-types';
-import { estimateVideoTokens, videoInputBudget } from './video-ai';
+import type { SubtitleRow, VideoCache, VideoChapter, VideoSource, VideoTimelineChapter } from './video-types';
+import { estimateVideoTokens, videoInputBudget } from './video-ai.ts';
+export function nativeVideoChapters(value: unknown, duration: number): VideoTimelineChapter[] {
+  if (!Array.isArray(value)) return [];
+  const chapters = value.filter(row => row?.type === 2 && Number.isFinite(row.from) && Number.isFinite(row.to) && row.from >= 0 && row.to > row.from && row.from < duration && typeof row.content === 'string' && row.content.trim())
+    .map(row => ({ start: row.from as number, end: Math.min(row.to,duration), title: row.content.trim() as string, summary: '', ad: false })).sort((a,b) => a.start-b.start);
+  return chapters.some((chapter,i) => i > 0 && chapter.start < chapters[i-1]!.end) ? [] : chapters;
+}
+export function videoTimeline(source: VideoSource | null, cache: VideoCache | null): VideoTimelineChapter[] {
+  if (source?.nativeChapters?.length) return source.nativeChapters;
+  if (!cache || cache.source.cid !== source?.cid) return [];
+  return cache.chapters?.value.map(chapter => ({ start: cache.rows[chapter.first]!.start, end: cache.rows[chapter.last]!.end, title: chapter.title, summary: chapter.summary, ad: chapter.ad })) ?? [];
+}
+export function videoAnswer(text: string, first: number, last: number) {
+  const refs = [...new Set([...text.matchAll(/\[\[(\d+)\]\]/g)].map(match => Number(match[1])))];
+  if (refs.length > 6 || refs.some(id => id < first || id > last)) throw new Error('回答包含无效字幕引用，未保存，请重试。');
+  const answer = text.replace(/\[\[\d+\]\]/g,'').trim();
+  if (!answer) throw new Error('模型未返回有效正文，请重试。');
+  return { answer, refs };
+}
 
 export function videoKey(bvid: string, cid: number, language: string) { return `${bvid}:${cid}:${language}`; }
 export function videoRoute(pathname: string, search: string) {

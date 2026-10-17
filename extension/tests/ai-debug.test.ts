@@ -2,12 +2,13 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { allDebugLogs, clearDebugLogs, DEBUG_ENABLED_KEY, debugState, setDebugEnabled, traceAIRequest } from '../src/ai-debug';
-import { readAnalysisStream } from '../src/analysis-stream';
 import { requestAI } from '../src/ai-request';
 import { migrateSettings } from '../src/core';
 import type { Preferences } from '../src/types';
 import { analyze } from '../src/analysis';
 import { createReviewer } from '../src/review';
+import { chaptersOutputSchema } from '../src/analysis/schemas';
+import { chaptersFromStarts } from '../src/video-chapters';
 import { createCommentService } from '../src/comment-service';
 
 const { storage, contains, send } = vi.hoisted(() => ({ storage: {} as Record<string, unknown>, contains: vi.fn(), send: vi.fn() }));
@@ -43,8 +44,8 @@ test('流式输出保留原始事件与思考内容，跨字节的中文不损�
   const bytes = new TextEncoder().encode(raw);
   const body = new ReadableStream<Uint8Array>({ start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); } });
   const controller = new AbortController();
-  const parsed = await traceAIRequest('评论速读', details, controller.signal, async () => new Response(body), response => readAnalysisStream(response, controller.signal, () => {}, () => {}));
-  expect(parsed.choices[0]?.message.content).toContain('输出中文');
+  const parsed = await traceAIRequest('评论速读', details, controller.signal, async () => new Response(body), response => response.text());
+  expect(parsed).toContain('输出中文');
   expect((await allDebugLogs())[0]).toMatchObject({ output: raw, status: 'success' });
 });
 
@@ -114,15 +115,15 @@ test('统一请求入口记录实际模型与提示词，不保存认证请求�
   await setDebugEnabled(true);
   const prefs: Preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: 'official-secret', providerKeys: { custom: 'custom-secret' }, decisionApiKey: 'decision-secret', result: null };
   prefs.settings.providers.push({ id: 'custom', name: '兼容服务', type: 'openai-compatible', baseUrl: 'https://example.com/v1' });
-  const fetch = vi.fn().mockImplementation(async () => new Response('{"answer":"正式输出"}')); vi.stubGlobal('fetch', fetch);
-  await requestAI(prefs, { providerId: 'custom', model: 'actual-model' }, details.input, signal(), response => response.json(), '计划分析');
+  const fetch = vi.fn().mockImplementation(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: '{"answer":"正式输出"}' } }] })); vi.stubGlobal('fetch', fetch);
+  await requestAI(prefs, { providerId: 'custom', model: 'actual-model' }, details.input, signal(), value => value, '计划分析');
   const logs = await allDebugLogs();
-  expect(logs[0]?.input).toEqual({ ...details.input, model: 'actual-model' });
-  expect(logs[0]?.output).toBe('{"answer":"正式输出"}');
+  expect(logs[0]?.input).toMatchObject({ ...details.input, model: 'actual-model' });
+  expect(logs[0]?.output).toContain('正式输出');
   for (const secret of ['official-secret', 'custom-secret', 'decision-secret', 'Authorization']) expect(JSON.stringify(logs)).not.toContain(secret);
-  expect(fetch.mock.calls[0]?.[1].headers.Authorization).toBe('Bearer custom-secret');
+  expect(new Headers(fetch.mock.calls[0]?.[1].headers).get('authorization')).toBe('Bearer custom-secret');
   contains.mockResolvedValue(false);
-  await expect(requestAI(prefs, { providerId: 'custom', model: 'actual-model' }, {}, signal(), response => response.json(), 'AI 通用复核')).rejects.toThrow('授权');
+  await expect(requestAI(prefs, { providerId: 'custom', model: 'actual-model' }, {}, signal(), value => value, 'AI 通用复核')).rejects.toThrow('授权');
   expect((await allDebugLogs()).find(log => log.feature === 'AI 通用复核')).toMatchObject({ status: 'error', output: '', error: expect.stringContaining('授权') });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -160,4 +161,35 @@ test('实际计划分析及澄清、两种复核、评论速读都经过日志�
   expect(JSON.stringify(logs[1]?.input)).toContain('准备考试');
   expect(JSON.stringify(logs[4]?.input)).toContain('讨论数学问题');
   for (const secret of ['official-secret', 'decision-secret']) expect(JSON.stringify(logs)).not.toContain(secret);
+});
+
+test('SDK等待响应时导出已记录实际发送参数，清除后完成请求也不重新写入', async () => {
+  await setDebugEnabled(true);
+  const prefs: Preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: 'private-key', result: null };
+  let finish!: (response: Response) => void;
+  const fetch = vi.fn(async () => new Promise<Response>(resolve => { finish = resolve; }));
+  vi.stubGlobal('fetch',fetch);
+  const task = requestAI(prefs,prefs.settings.ai,{ messages: [{ role: 'user', content: '仅测试' }], max_tokens: 1234 },signal(),value => value,'计划分析');
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  const logs = await allDebugLogs();
+  expect(logs[0]).toMatchObject({ status: 'pending', input: { model: prefs.settings.ai.model, max_tokens: 1234, stream: false } });
+  expect(JSON.stringify(logs)).not.toContain('private-key');
+  await clearDebugLogs();
+  finish(Response.json({ choices: [{ finish_reason: 'stop', message: { content: '完成' } }] }));
+  expect(await task).toBe('完成'); expect(await allDebugLogs()).toEqual([]);
+});
+
+
+test('HTTP正常结束但章节业务校验失败时日志标记失败，不误报成功或自动重试', async () => {
+  await setDebugEnabled(true);
+  const prefs: Preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: 'offline', result: null };
+  const value = { chapters: [{ first: 1, title: '遗漏首行', summary: '要点', ad: false }] };
+  const fetch = vi.fn(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }));
+  vi.stubGlobal('fetch',fetch);
+  const rows = Array.from({ length: 20 },(_,i) => ({ start: i, end: i+1, text: '字幕' }));
+  await expect(requestAI(prefs,prefs.settings.ai,{ messages: [{ role: 'user', content: '离线章节' }] },signal(),value => {
+    return chaptersFromStarts(value,rows,0,19);
+  },'视频章节',{ schema: chaptersOutputSchema })).rejects.toThrow('起始行无效');
+  expect((await allDebugLogs())[0]).toMatchObject({ status: 'error', httpStatus: 200, error: expect.stringContaining('起始行无效') });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

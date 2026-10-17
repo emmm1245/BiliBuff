@@ -1,9 +1,13 @@
 // 管理内置及兼容 AI 服务、独立密钥、站点授权，并复用服务与模型选择控件。
+import { Input } from './primitives/input';
+import { Button } from './primitives/button';
+import { Card } from './primitives/card';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { browser } from 'wxt/browser';
 import { DEEPSEEK_MODELS, providerOrigin } from '../ai-providers';
 import type { AIProvider, Settings } from '../types';
 import { Icon } from './Icon';
+import deepseekLogo from '@lobehub/icons-static-svg/icons/deepseek-color.svg';
 import styles from './App.module.css';
 
 interface Props {
@@ -22,18 +26,18 @@ export function AIServiceSettings({ draft, setDraft, keyInput, setKeyInput, prov
       review: draft.review.providerId === id ? { ...draft.review, providerId: 'deepseek', model: 'deepseek-flash' } : draft.review });
     setProviderKeys(Object.fromEntries(Object.entries(providerKeys).filter(([key]) => key !== id)));
   }
-  return <section className={styles.card}>
+  return <Card className={styles.card}>
     <h2>已配置服务</h2>
     <div className={styles.providerList}>{draft.providers.map(provider => {
-      const used = (draft.ai.providerId ?? 'deepseek') === provider.id || draft.quickRead.providerId === provider.id || (draft.review.mode === 'general' && (draft.review.providerId ?? 'deepseek') === provider.id);
+      const used = (draft.ai.providerId ?? 'deepseek') === provider.id || draft.quickRead.providerId === provider.id || (draft.review.mode === 'general' && (draft.review.providerId ?? 'deepseek') === provider.id) || (['summary','chapters','chat'] as const).some(task => draft.videoAssistant[task].providerId === provider.id);
       return <ProviderCard key={provider.id} provider={provider} used={used} onChange={change => update(provider.id, change)}
         apiKey={provider.id === 'deepseek' ? keyInput : providerKeys[provider.id] ?? ''}
         onKeyChange={value => provider.id === 'deepseek' ? setKeyInput(value) : setProviderKeys({ ...providerKeys, [provider.id]: value })}
         onRemove={() => remove(provider.id)} />;
     })}</div>
-    <div className={styles.row}><button onClick={() => setDraft({ ...draft, providers: [...draft.providers, { id: `custom-${crypto.randomUUID()}`, name: '自定义服务', type: 'openai-compatible', baseUrl: '' }] })}>添加 OpenAI 兼容服务</button></div>
+    <div className={styles.row}><Button onClick={() => setDraft({ ...draft, providers: [...draft.providers, { id: `custom-${crypto.randomUUID()}`, name: '自定义服务', type: 'openai-compatible', baseUrl: '' }] })}>添加 OpenAI 兼容服务</Button></div>
     <p className={styles.notice}>密钥仅保存在本机，未加密；清空即可删除。各功能的模型在对应面板选择。</p>
-  </section>;
+  </Card>;
 }
 
 function ProviderCard({ provider, used, apiKey, onChange, onKeyChange, onRemove }: {
@@ -42,16 +46,16 @@ function ProviderCard({ provider, used, apiKey, onChange, onKeyChange, onRemove 
   const [expanded, setExpanded] = useState(provider.type === 'deepseek' || !provider.baseUrl);
   const official = provider.type === 'deepseek';
   return <details className={styles.provider} open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary><span>{provider.name || '自定义服务'}</span><small>{official ? '内置' : 'OpenAI 兼容'}{used ? ' · 已选用' : ''}</small></summary>
+    <summary><span><Icon name="chevronRight" size={16} className={styles.providerChevron} />{official ? <img className={styles.providerLogo} src={deepseekLogo} alt="" /> : <Icon name="services" size={20} />}{provider.name || '自定义服务'}</span><small>{official ? '内置' : 'OpenAI 兼容'}{used ? ' · 已选用' : ''}</small></summary>
     <div className={styles.providerBody}>
       {!official && <div className={styles.formGrid}>
-        <label>服务名称<input value={provider.name} onChange={event => onChange({ name: event.target.value })} placeholder="例如：我的模型服务" /></label>
-        <label>基础地址<input type="url" value={provider.baseUrl} onChange={event => onChange({ baseUrl: event.target.value })} placeholder="https://example.com/v1" /></label>
+        <label>服务名称<Input value={provider.name} onChange={event => onChange({ name: event.target.value })} placeholder="例如：我的模型服务" /></label>
+        <label>基础地址<Input type="url" value={provider.baseUrl} onChange={event => onChange({ baseUrl: event.target.value })} placeholder="https://example.com/v1" /></label>
       </div>}
       <KeyInput label={official ? 'DeepSeek 密钥' : `${provider.name}密钥`} value={apiKey} onChange={onKeyChange} placeholder={official ? '填写官方密钥' : '填写此服务的密钥；本地免密服务可留空'} />
       {official ? <small>{provider.baseUrl}</small> : <div className={styles.row}>
         <ProviderAccess baseUrl={provider.baseUrl} />
-        <button disabled={used} title={used ? '请先让使用它的功能切换到其他服务' : undefined} onClick={onRemove}>删除服务</button>
+        <Button disabled={used} title={used ? '请先让使用它的功能切换到其他服务' : undefined} onClick={onRemove}>删除服务</Button>
         {used && <span className={styles.notice}>请先在使用此服务的功能中切换服务，再删除。</span>}
       </div>}
     </div>
@@ -75,7 +79,7 @@ function ProviderAccess({ baseUrl }: { baseUrl: string }) {
       void browser.permissions.request({ origins: [providerOrigin(baseUrl)] }).then(allowed => setMessage(allowed ? '已授权访问此站点' : '未获得授权，服务配置已保留'), () => setMessage('授权失败，请重试'));
     } catch (error) { setMessage(error instanceof Error ? error.message : '请先填写基础地址'); }
   }
-  return <><button disabled={!baseUrl.trim()} onClick={grant}>授权访问此站点</button>{message && <small role="status">{message}</small>}</>;
+  return <><Button disabled={!baseUrl.trim()} onClick={grant}>授权访问此站点</Button>{message && <small role="status">{message}</small>}</>;
 }
 
 export function ModelSelection({ providers, providerId = 'deepseek', model, onChange }: {
@@ -87,7 +91,7 @@ export function ModelSelection({ providers, providerId = 'deepseek', model, onCh
     </select></label>
     <label>模型{providerId === 'deepseek' ? <select value={model} onChange={event => onChange({ providerId, model: event.target.value })}>
       {DEEPSEEK_MODELS.map(value => <option key={value} value={value}>{value}</option>)}
-    </select> : <input value={model} onChange={event => onChange({ providerId, model: event.target.value.trim() })} placeholder="填写服务商提供的模型名称" />}</label>
+    </select> : <Input value={model} onChange={event => onChange({ providerId, model: event.target.value.trim() })} placeholder="填写服务商提供的模型名称" />}</label>
   </>;
 }
 
@@ -95,8 +99,8 @@ export function KeyInput({ label, value, onChange, placeholder }: { label: strin
   const [visible, setVisible] = useState(false);
   return <div className={styles.switch}>
     <label>{label}<span className={styles.keyField}>
-      <input type={visible ? 'text' : 'password'} autoComplete="off" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+      <Input type={visible ? 'text' : 'password'} autoComplete="off" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
     </span></label>
-    <button type="button" className={styles.keyToggle} aria-label={`${visible ? '隐藏' : '查看'}${label}`} aria-pressed={visible} title={visible ? '隐藏密钥' : '查看密钥'} onClick={() => setVisible(current => !current)}><Icon name={visible ? 'eyeOff' : 'eye'} /></button>
+    <Button type="button" className={styles.keyToggle} aria-label={`${visible ? '隐藏' : '查看'}${label}`} aria-pressed={visible} title={visible ? '隐藏密钥' : '查看密钥'} onClick={() => setVisible(current => !current)}><Icon name={visible ? 'eyeOff' : 'eye'} /></Button>
   </div>;
 }

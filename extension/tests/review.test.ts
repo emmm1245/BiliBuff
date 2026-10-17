@@ -6,7 +6,8 @@ import type { Preferences, ReviewVerdict } from '../src/types';
 const { cachedReview, saveReview } = vi.hoisted(() => ({ cachedReview: vi.fn(), saveReview: vi.fn() }));
 vi.mock('../src/database', () => ({ cachedReview, saveReview }));
 vi.mock('wxt/browser', () => ({ browser: { permissions: { contains: vi.fn().mockResolvedValue(true) }, storage: { local: { get: async () => ({}) } } } }));
-import { createReviewer, parseReviewResponse } from '../src/review';
+import { createReviewer } from '../src/review';
+import { parseDecisionResponse, parseGeneralReview } from '../src/review/results';
 
 let prefs: Preferences;
 let tags: ReturnType<typeof vi.fn<(bvid: string) => Promise<string[]>>>;
@@ -66,10 +67,11 @@ test('通用复核独立选择兼容服务与模型，切换地址或模型后�
   expect(await run()).toBe('unrelated');
   const [url, options] = fetchMock.mock.calls[0]!;
   expect(url).toBe('https://review.example/v1/chat/completions');
-  expect(options.headers.Authorization).toBe('Bearer review-secret');
+  expect(new Headers(options.headers).get('authorization')).toBe('Bearer review-secret');
   const body = JSON.parse(options.body);
   expect(body).toMatchObject({ model: 'fast-model', max_tokens: 512, stream: false });
-  expect(body).not.toHaveProperty('thinking'); expect(body).not.toHaveProperty('response_format');
+  expect(body).not.toHaveProperty('thinking');
+  expect(body.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true } });
   expect(await run()).toBe('unrelated'); expect(fetchMock).toHaveBeenCalledTimes(1);
   prefs.settings.review.model = 'another-model';
   expect(await run()).toBe('unrelated'); expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -85,7 +87,7 @@ test.each(['123', 'ws-example123', 'llm-example123'])('阿里云空间 %s 使用
   const [url, options] = fetchMock.mock.calls[0]!;
   const body = JSON.parse(options.body);
   expect(url).toBe(`https://${workspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone`);
-  expect(options.headers.Authorization).toBe('Bearer aliyun-secret');
+  expect(new Headers(options.headers).get('authorization')).toBe('Bearer aliyun-secret');
   expect(body.model).toBe('decision-model-preview');
   expect(body.state.videos[0].durationSeconds).toBe(57);
   expect(body.questions.v0.instructions).toContain('不能仅凭时长决定分类');
@@ -94,11 +96,11 @@ test.each(['123', 'ws-example123', 'llm-example123'])('阿里云空间 %s 使用
 });
 
 test('决策模型把握不足时沿用原规则，不以低概率结果屏蔽', () => {
-  expect(parseReviewResponse({ answers: { v0: answer('unrelated', .7) } }, ['v0'], 'decision')).toEqual(['unknown']);
-  expect(parseReviewResponse({ answers: { v0: { ...answer(), probabilities: { related: .3, unrelated: .6, unknown: .1 } } } }, ['v0'], 'decision')).toEqual(['unknown']);
+  expect(parseDecisionResponse({ answers: { v0: answer('unrelated', .7) } }, ['v0'])).toEqual(['unknown']);
+  expect(parseDecisionResponse({ answers: { v0: { ...answer(), probabilities: { related: .3, unrelated: .6, unknown: .1 } } } }, ['v0'])).toEqual(['unknown']);
   for (const invalid of [null, { answers: {} }, { answers: { v0: answer('invalid') } },
     { answers: { v0: { ...answer(), confidence: 2 } } }, { answers: { v0: { ...answer(), probabilities: {} } } }]) {
-    expect(() => parseReviewResponse(invalid, ['v0'], 'decision')).toThrow();
+    expect(() => parseDecisionResponse(invalid, ['v0'])).toThrow();
   }
 });
 
@@ -213,11 +215,15 @@ test('接口失败只请求一次，不缓存失败，向设置页保留错误�
   expect(fetchMock).toHaveBeenCalledOnce(); expect(saveReview).not.toHaveBeenCalled(); expect(reviewer.error()).toContain('429');
 });
 
-test('截断、缺项和非法分类不当作无关内容', () => {
-  for (const invalid of [{}, { choices: [{ finish_reason: 'length', message: { content: '{}' } }] },
+test('截断、缺项和非法分类不当作无关内容', async () => {
+  const invalids = [{}, { choices: [{ finish_reason: 'length', message: { content: '{}' } }] },
     { choices: [{ finish_reason: 'stop', message: { content: '{' } }] },
-    { choices: [{ finish_reason: 'stop', message: { content: '{"decisions":{"v0":"blocked"}}' } }] }]) {
-    expect(() => parseReviewResponse(invalid, ['v0'], 'general')).toThrow();
+    { choices: [{ finish_reason: 'stop', message: { content: '{"decisions":{"v0":"blocked"}}' } }] }];
+  for (const [index,invalid] of invalids.entries()) {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(invalid)));
+    const task = reviewer.request(`BVinvalid${index}`, '数学新闻');
+    const rejected = expect(task).rejects.toThrow(); await vi.advanceTimersByTimeAsync(50); await rejected;
   }
-  expect(() => parseReviewResponse({ choices: [{ finish_reason: 'stop', message: { content: '{"decisions":{"v0":"related"}}' } }] }, ['v0', 'v1'], 'general')).toThrow();
+  expect(saveReview).not.toHaveBeenCalled();
+  expect(() => parseGeneralReview({ decisions: { v0: 'related' } }, ['v0','v1'])).toThrow();
 });

@@ -6,7 +6,7 @@ import { commentsText, quickReadKey, selectComments } from './comment-data';
 import { createCommentCard } from './comment-card';
 import { jumpToComment } from './comment-navigation';
 import type { CommentCardState } from './comment-card';
-import type { CommentPage, CommentRecord, QuickReadProgress, QuickReadResult, VideoCommentsSource } from './comment-types';
+import type { CommentPage, CommentRecord, QuickReadProgress, VideoCommentsSource } from './comment-types';
 import type { ContentSettings } from './types';
 import type { Theme } from './theme';
 
@@ -37,7 +37,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
   function cancel() {
     job?.abort(); job = null;
     if (requestId) { void send({ type: 'comments-cancel', requestId }).catch(() => {}); requestId = ''; }
-    state.analyzing = false; state.preview = ''; state.status = state.paused ? '已取消速读；采集仍暂停，可继续采集。' : '已取消速读，评论仍可导出。'; update();
+    state.analyzing = false; state.preview = ''; state.partial = undefined; state.status = state.paused ? '已取消速读；采集仍暂停，可继续采集。' : '已取消速读，评论仍可导出。'; update();
   }
   function pauseCollection() {
     if (!collection || state.paused) return;
@@ -52,7 +52,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     if (!id) { view.remove(); return; }
     update(true,true);
     const epoch = generation;
-    void send<QuickReadResult | null>({ type: 'comments-cache', bvid }).then(result => {
+    void send({ type: 'comments-cache', bvid }).then(result => {
       if (epoch !== generation || signal.aborted || !result || result.key !== quickReadKey(settings.quickRead) || state.analyzing || state.result) return;
       state.result = result; autoAttempted = true; started = true;
       if (!state.collecting) state.status = result.complete === false ? '已恢复部分评论速读缓存；需要补齐评论或导出时，点击“检查更新”。' : '已恢复本地速读缓存；需要更新或导出评论时，点击“检查更新”。'; update();
@@ -117,12 +117,12 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     collectionStatus = state.status = previous.size ? '保留已有评论，正在检查新增与变化……' : '正在读取主评论……'; update();
     const add = (page: CommentPage) => { for (const comment of page.comments) comments.set(comment.id,comment); update(true); };
     try {
-      if (!source) { const resolved = await send<VideoCommentsSource>({ type: 'comments-source', bvid: id }); active(); source = resolved; }
+      if (!source) { const resolved = await send({ type: 'comments-source', bvid: id }); active(); source = resolved; }
       const oid = source.oid;
       let offset = '', noProgress = 0, selected = false;
       for (;;) {
         await ready();
-        const page = await send<CommentPage>({ type: 'comments-page', oid, offset }); active();
+        const page = await send({ type: 'comments-page', oid, offset }); active();
         const before = roots.size; state.expected = page.expected; selected ||= page.selected;
         for (const comment of page.comments) {
           if (comment.root === '0') { roots.set(comment.id,comment); seen.add(comment.id); }
@@ -143,7 +143,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
         const ids = new Set<string>(); let expected = root.replies;
         for (let pn = 1;;pn++) {
           await ready();
-          const page = await send<CommentPage>({ type: 'comments-page', oid, root: root.id, pn }); active();
+          const page = await send({ type: 'comments-page', oid, root: root.id, pn }); active();
           expected = page.expected;
           for (const comment of page.comments) if (comment.root === root.id) ids.add(comment.id);
           add(page);
@@ -169,10 +169,10 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
   async function analyze() {
     if (!source || job || state.collecting || !comments.size || signal.aborted) return;
     const controller = new AbortController(), epoch = generation; job = controller; requestId = crypto.randomUUID(); autoAttempted = true;
-    const id = requestId; state.analyzing = true; state.preview = ''; state.error = ''; state.status = '正在整理评论，最长等待4分钟……'; update(false,true);
+    const id = requestId; state.analyzing = true; state.preview = ''; state.partial = undefined; state.error = ''; state.status = '正在整理评论，最长等待4分钟……'; update(false,true);
     try {
       const selected = selectComments([...comments.values()],settings.quickRead.limit,lengths);
-      const result = await send<QuickReadResult>({ type: 'comments-analyze', requestId: id, source, comments: selected, total: comments.size, complete: state.complete, expected: state.expected });
+      const result = await send({ type: 'comments-analyze', requestId: id, source, comments: selected, total: comments.size, complete: state.complete, expected: state.expected });
       if (controller.signal.aborted || signal.aborted || epoch !== generation) return;
       state.result = result;
       state.status = result.complete === false
@@ -181,7 +181,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     } catch (error) {
       if (!controller.signal.aborted && epoch === generation && !signal.aborted) { state.error = errorText(error); state.status = '速读未完成；评论仍可复制或下载。'; }
     } finally {
-      if (job === controller) { job = null; requestId = ''; state.analyzing = false; state.preview = ''; update(); }
+      if (job === controller) { job = null; requestId = ''; state.analyzing = false; state.preview = ''; state.partial = undefined; update(); }
     }
   }
   function maybeAuto() {
@@ -204,12 +204,13 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
   const onMessage = (message: QuickReadProgress | { type: 'theme-changed'; theme: Theme }) => {
     if (message.type === 'theme-changed') { view.theme(message.theme); return; }
     if (message.type !== 'comments-progress' || !state.analyzing || !job || job.signal.aborted || signal.aborted || message.requestId !== requestId || message.bvid !== bvid) return;
-    if (message.summary) { state.preview = message.summary; state.status = '正在生成总览，话题和推荐评论将在完成后显示……'; }
+    if (message.partial) { state.partial = message.partial; state.status = '正在生成总览、话题与推荐评论……'; }
+    if (message.summary) { state.preview = message.summary; state.status = '正在生成总览、话题与推荐评论……'; }
     else if (message.thinking && !state.preview) state.status = '模型正在思考，等待生成总览……';
     update();
   };
   browser.runtime.onMessage.addListener(onMessage);
-  void send<Theme>({ type: 'theme' }).then(theme => view.theme(theme)).catch(() => {});
+  void send({ type: 'theme' }).then(theme => view.theme(theme)).catch(() => {});
   const observer = new MutationObserver(() => { if (bvid) view.mount(); }); observer.observe(document.body,{ childList: true, subtree: true });
   window.addEventListener('resize',view.mount,{ signal });
   const timer = setInterval(() => {

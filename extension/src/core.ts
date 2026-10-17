@@ -1,9 +1,14 @@
-// 提供不依赖浏览器的规则判定、播放计时、模型结果和备份校验。
-import type { AIOptions, AnalysisResult, Backup, Clarification, ClarificationAnswer, RuleGroup, Settings, Side, Suggestion, Suggestions, VideoEvent, WordField } from './types';
+// 校验设置、业务结果与旧备份，并集中导出已按功能拆分的纯逻辑。
+import { normalize, parseWords } from './filter/words.ts';
+export { normalize, parseWords } from './filter/words.ts';
+export { matchGroup, requiresTags, classify } from './filter/rules.ts';
+export { isListPlayback, playbackBvid, playbackSeconds, parseDuration } from './watching/logic.ts';
+export { mergeSuggestions } from './analysis/suggestions.ts';
+import type { AIOptions, AnalysisResult, Backup, Clarification, ClarificationAnswer, Settings, Side, Suggestion, Suggestions, VideoEvent, WordField } from './types';
 import { DEEPSEEK, DEEPSEEK_MODELS, validateProviderKeys, validateProviders } from './ai-providers.ts';
+import { aiOptionsSchema, chapterRangesSchema, eventSchema } from './settings/schemas.ts';
+import { defaultVideoOptions, normalizeVideoSelection } from './video-ai.ts';
 
-export function normalize(text: string) { return text.normalize('NFKC').toLowerCase().trim(); }
-export function parseWords(text: string) { return [...new Set(text.split(/[\n,，;；]+/).map(normalize).filter(Boolean))]; }
 export function migrateSettings(old: { topics?: string; blocked?: string; tags?: boolean } = {}): Settings {
   return {
     positive: { text: parseWords(old.topics || ''), tags: [], textTags: old.tags ?? true },
@@ -13,12 +18,16 @@ export function migrateSettings(old: { topics?: string; blocked?: string; tags?:
     ai: { model: 'deepseek-flash', thinking: false, effort: 'high', maxTokens: 65536 },
     providers: [{ ...DEEPSEEK }],
     review: { enabled: false, mode: 'general', workspaceId: '' },
-    quickRead: { auto: false, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' }, planMaxLength: 100,
+    quickRead: { auto: false, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' }, videoAssistant: defaultVideoOptions(), planMaxLength: 100,
   };
 }
 export function currentSettings(saved: Partial<Settings> = {}): Settings {
   const defaults = migrateSettings();
-  return { ...defaults, ...saved, ai: { ...defaults.ai, ...saved.ai }, review: { ...defaults.review, ...saved.review }, quickRead: { ...defaults.quickRead, ...saved.quickRead } };
+  const video = saved.videoAssistant;
+  return { ...defaults, ...saved, ai: { ...defaults.ai, ...saved.ai }, review: { ...defaults.review, ...saved.review }, quickRead: { ...defaults.quickRead, ...saved.quickRead },
+    videoAssistant: { ...defaults.videoAssistant, ...video,
+      chapterRanges: { concise: { ...defaults.videoAssistant.chapterRanges.concise, ...video?.chapterRanges?.concise },
+        balanced: { ...defaults.videoAssistant.chapterRanges.balanced, ...video?.chapterRanges?.balanced }, detailed: { ...defaults.videoAssistant.chapterRanges.detailed, ...video?.chapterRanges?.detailed } }, summary: { ...defaults.videoAssistant.summary, ...video?.summary }, chapters: { ...defaults.videoAssistant.chapters, ...video?.chapters }, chat: { ...defaults.videoAssistant.chat, ...video?.chat } } };
 }
 export const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
 export function validateWallpaper(value: unknown): string {
@@ -35,49 +44,6 @@ export function validatePlan(plan: string, maxLength: number) {
 export function validWorkspaceId(value: string) {
   return /^(?:\d+|(?:ws|llm)-[a-z0-9]+(?:-[a-z0-9]+)*)$/i.test(value);
 }
-export function matchGroup(title: string, tags: string[], group: RuleGroup, exactTags: boolean) {
-  const text = normalize(title);
-  const labels = tags.map(normalize);
-  const titleWord = group.text.find(word => text.includes(word));
-  if (titleWord) return { word: titleWord, source: '标题' };
-  const tagWord = group.tags.find(word => labels.some(tag => exactTags ? tag === word : tag.includes(word)));
-  if (tagWord) return { word: tagWord, source: '视频标签' };
-  const crossWord = group.textTags && group.text.find(word => labels.some(tag => tag.includes(word)));
-  return crossWord ? { word: crossWord, source: '视频标签（标题词）' } : null;
-}
-export function requiresTags(title: string, settings: Settings) {
-  if (matchGroup(title, [], settings.positive, settings.exactTags) && settings.positiveWins) return false;
-  if (matchGroup(title, [], settings.negative, settings.exactTags) && !settings.positiveWins) return false;
-  return [settings.positive, settings.negative].some(group => group.tags.length || (group.textTags && group.text.length));
-}
-export function classify(title: string, tags: string[], settings: Settings, tagState = 'ready'): { kind: 'pending' | 'blocked' | 'highlight' | 'normal'; reason: string } {
-  const positive = matchGroup(title, tags, settings.positive, settings.exactTags);
-  const negative = matchGroup(title, tags, settings.negative, settings.exactTags);
-  if (settings.strict && tagState !== 'ready' && requiresTags(title, settings)) {
-    return { kind: 'pending', reason: tagState === 'failed' ? '标签获取失败，尚未确认可放行' : tagState === 'unavailable' ? '此卡片没有可查询的视频标签' : '正在等待视频标签' };
-  }
-  if (negative && !(positive && settings.positiveWins)) return { kind: 'blocked', reason: `避开内容 · ${negative.source}：${negative.word}` };
-  if (positive) return { kind: 'highlight', reason: `偏好内容 · ${positive.source}：${positive.word}` };
-  return settings.strict ? { kind: 'blocked', reason: '严格模式：未命中偏好内容' } : { kind: 'normal', reason: '' };
-}
-export function isListPlayback(pathname: string) { return /^\/list\/(?:watchlater|ml\d+)\/?$/.test(pathname); }
-export function playbackBvid(pathname: string, search = '') {
-  const id = pathname.match(/^\/video\/(BV\w+)\/?$/)?.[1] ||
-    (isListPlayback(pathname) ? new URLSearchParams(search).get('bvid') || '' : '');
-  return /^BV\w+$/.test(id) ? id : '';
-}
-export function playbackSeconds(previous: number, current: number, wallSeconds: number, rate: number) {
-  const delta = current - previous;
-  if (delta <= 0 || wallSeconds <= 0 || delta > wallSeconds * rate + 1) return 0;
-  return Math.min(delta / rate, wallSeconds);
-}
-export function parseDuration(text: string): number | null {
-  if (!/^\d+:\d{2}(?::\d{2})?$/.test(text.trim())) return null;
-  const parts = text.trim().split(':').map(Number);
-  if (parts.slice(1).some(part => part > 59)) return null;
-  const seconds = parts.reduce((total, part) => total * 60 + part, 0);
-  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
-}
 export function recentSamples(records: VideoEvent[], limit = 100) {
   const unique = new Map<string, VideoEvent>();
   for (const record of records) {
@@ -91,14 +57,13 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 export function validateAIOptions(value: unknown): AIOptions {
-  const ai = object(value);
-  if (typeof ai.model !== 'string' || /\s/.test(ai.model) || (ai.providerId !== undefined && (typeof ai.providerId !== 'string' || !ai.providerId)) ||
-      ((ai.providerId ?? 'deepseek') === 'deepseek' && !DEEPSEEK_MODELS.includes(ai.model)) || typeof ai.thinking !== 'boolean' ||
-      !['low', 'high', 'max'].includes(String(ai.effort)) || !Number.isInteger(ai.maxTokens) || Number(ai.maxTokens) < 1024 || Number(ai.maxTokens) > 393216) {
+  const parsed = aiOptionsSchema.safeParse(value);
+  if (!parsed.success || ((parsed.data.providerId ?? 'deepseek') === 'deepseek' && !DEEPSEEK_MODELS.includes(parsed.data.model))) {
     throw new Error('请检查模型设置：选择有效模型与思考强度，生成上限填写 1,024–393,216 之间的整数。');
   }
-  return { ...(ai.providerId !== undefined ? { providerId: ai.providerId as string } : {}), model: ai.model, thinking: ai.thinking, effort: ai.effort as AIOptions['effort'], maxTokens: Number(ai.maxTokens) };
+  return parsed.data;
 }
+
 export function modelParameters(ai: AIOptions) {
   const options = validateAIOptions(ai);
   if ((options.providerId ?? 'deepseek') !== 'deepseek') return { model: options.model, max_tokens: options.maxTokens };
@@ -126,22 +91,6 @@ export function validateSuggestions(value: unknown): Suggestions {
   });
   return { summary: data.summary.slice(0, 4000), suggestions };
 }
-export function parseModelResponse(value: unknown): unknown {
-  const response = object(value);
-  const choices = response.choices;
-  const choice = Array.isArray(choices) && choices[0] ? object(choices[0]) : null;
-  if (!choice?.message) throw new Error('接口返回缺少分析结果，未保存建议。');
-  if (choice.finish_reason === 'length') throw new Error('模型生成达到输出上限，结果被截断，未保存建议。');
-  if (choice.finish_reason !== 'stop') throw new Error('模型未正常结束生成，未保存建议。');
-  const message = object(choice.message);
-  if (typeof message.content !== 'string' || !message.content.trim()) throw new Error(message.reasoning_content ? '模型只返回了思考过程，没有正式结果，未保存建议。' : '模型返回的正式结果为空，未保存建议。');
-  let parsed: unknown;
-  try { parsed = JSON.parse(message.content); } catch { throw new Error('模型没有返回完整 JSON，未保存建议。'); }
-  return parsed;
-}
-export function parseAnalysisResponse(value: unknown) {
-  return validateSuggestions(parseModelResponse(value));
-}
 export function validateClarification(value: unknown): Clarification {
   const data = object(value);
   if (typeof data.summary !== 'string' || typeof data.question !== 'string' || !data.question.trim() || data.question.length > 300 ||
@@ -157,15 +106,6 @@ export function validateClarificationAnswer(value: unknown): ClarificationAnswer
       !['option', 'custom', 'skip'].includes(String(data.kind)) || typeof data.answer !== 'string' || data.answer.length > 1000 ||
       (data.kind === 'skip' ? data.answer !== '' : !data.answer.trim())) throw new Error('请填写有效的澄清回答（最多 1000 字）。');
   return { question: data.question, kind: data.kind as ClarificationAnswer['kind'], answer: data.answer.trim() };
-}
-export function mergeSuggestions(settings: Settings, suggestions: Suggestion[]) {
-  const merged = structuredClone(settings);
-  for (const { action, side, field, word } of suggestions) {
-    if (action === 'remove') merged[side][field] = merged[side][field].filter(value => value !== word);
-    else if (!merged[side][field].includes(word)) merged[side][field].push(word);
-  }
-  if (merged.strict && !merged.positive.text.length && !merged.positive.tags.length) throw new Error('严格模式需要至少一个偏好词条，请保留一个偏好词条或同时选择新增建议。');
-  return merged;
 }
 export function validateSettings(value: unknown): Settings {
   const data = object(value);
@@ -190,6 +130,19 @@ export function validateSettings(value: unknown): Settings {
   if (settings.strict && !settings.positive.text.length && !settings.positive.tags.length) throw new Error('严格模式需要至少一个偏好词条。');
   settings.ai = validateAIOptions(settings.ai);
   settings.providers = validateProviders(settings.providers);
+  const video = object(settings.videoAssistant);
+  for (const flag of ['autoSummary','autoChapters','autoSkipAds'] as const) if (typeof video[flag] !== 'boolean') throw new Error('视频助手自动功能开关无效。');
+  if (!['concise','balanced','detailed'].includes(video.chapterDensity as string)) throw new Error('请选择有效的章节密度。');
+  const ranges = chapterRangesSchema.safeParse(video.chapterRanges);
+  if (!ranges.success) throw new Error('章节数量上下限须为正整数，且下限不能大于上限。');
+  const selections = Object.fromEntries((['summary','chapters','chat'] as const).map(task => {
+    const raw = object(video[task]);
+    if (typeof raw.providerId !== 'string' || !settings.providers.some(p => p.id === raw.providerId) || typeof raw.model !== 'string' || /\s/.test(raw.model) || (raw.providerId === 'deepseek' && !DEEPSEEK_MODELS.includes(raw.model))) throw new Error('请检查视频助手的服务与模型。');
+    const selection = normalizeVideoSelection({ providerId: raw.providerId, model: raw.model, effort: raw.effort as Settings['videoAssistant']['summary']['effort'], maxTokens: raw.maxTokens as number | undefined, contextTokens: raw.contextTokens as number | undefined });
+    return [task,selection];
+  }));
+  settings.videoAssistant = { chapterRanges: ranges.data, chapterDensity: video.chapterDensity as Settings['videoAssistant']['chapterDensity'], autoSummary: video.autoSummary as boolean, autoChapters: video.autoChapters as boolean, autoSkipAds: video.autoSkipAds as boolean,
+    summary: selections.summary!, chapters: selections.chapters!, chat: selections.chat! };
   const quick = object(settings.quickRead);
   if (typeof quick.auto !== 'boolean' || !Number.isInteger(quick.limit) || Number(quick.limit) < 1 || Number(quick.limit) > 10000 ||
       !Number.isInteger(quick.valuableCount) || Number(quick.valuableCount) < 1 || Number(quick.valuableCount) > 50 ||
@@ -213,15 +166,14 @@ export function validateSettings(value: unknown): Settings {
   return { positive: settings.positive, negative: settings.negative, strict: settings.strict, positiveWins: settings.positiveWins,
     exactTags: settings.exactTags, blockAds: settings.blockAds, hideCarousel: settings.hideCarousel, showMaskReasons: settings.showMaskReasons,
     homeSearch: settings.homeSearch, homeWallpaper: settings.homeWallpaper,
-    minWatched: settings.minWatched, minBlocked: settings.minBlocked, ai: settings.ai, providers: settings.providers, review: settings.review, quickRead: settings.quickRead, planMaxLength: settings.planMaxLength };
+    minWatched: settings.minWatched, minBlocked: settings.minBlocked, ai: settings.ai, providers: settings.providers, review: settings.review, quickRead: settings.quickRead, videoAssistant: settings.videoAssistant, planMaxLength: settings.planMaxLength };
 }
 export function validateEvent(value: unknown): VideoEvent {
-  const event = object(value);
-  if (!['highlight', 'blocked', 'watched'].includes(String(event.kind)) || typeof event.bvid !== 'string' || !/^BV\w+$/.test(event.bvid) ||
-    typeof event.title !== 'string' || !event.title.trim() || typeof event.at !== 'number' || !Number.isFinite(event.at) || event.at < 0 ||
-    !(event.tags === null || (Array.isArray(event.tags) && event.tags.every(tag => typeof tag === 'string'))) || typeof event.reason !== 'string') throw new Error('视频记录无效。');
-  return { kind: event.kind as VideoEvent['kind'], bvid: event.bvid, title: event.title, at: event.at, tags: event.tags as string[] | null, reason: event.reason };
+  const parsed = eventSchema.safeParse(value);
+  if (!parsed.success) throw new Error('视频记录无效。');
+  return parsed.data;
 }
+
 export function validateResult(value: unknown): AnalysisResult {
   const result = object(value);
   if (typeof result.plan !== 'string' || result.plan.length > 6000 || typeof result.at !== 'number' || !Number.isFinite(result.at) || result.at < 0) throw new Error('分析记录无效。');

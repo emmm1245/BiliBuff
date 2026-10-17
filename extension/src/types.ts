@@ -1,18 +1,13 @@
 // 定义规则、模型参数、观看记录、备份和扩展消息的数据结构。
 import type { CommentMessage, QuickReadOptions } from './comment-types';
-import type { VideoMessage } from './video-types';
+import type { ChapterDensity, VideoAssistantOptions, VideoMessage } from './video-types';
 export type Side = 'positive' | 'negative';
 export type WordField = 'text' | 'tags';
 export type EventKind = 'highlight' | 'blocked' | 'watched';
-export interface RuleGroup { text: string[]; tags: string[]; textTags: boolean }
-export interface AIProvider { id: string; name: string; type: 'deepseek' | 'openai-compatible'; baseUrl: string }
-export interface AIOptions {
-  providerId?: string;
-  model: string;
-  thinking: boolean;
-  effort: 'low' | 'high' | 'max';
-  maxTokens: number;
-}
+export type { RuleGroup, AIProvider, AIOptions, VideoEvent } from './settings/schemas';
+import type { RuleGroup, AIProvider, AIOptions, VideoEvent } from './settings/schemas';
+export type { Suggestion, Suggestions, Clarification, ClarificationAnswer } from './analysis/schemas';
+import type { Suggestions, ClarificationAnswer } from './analysis/schemas';
 export interface ReviewOptions { enabled: boolean; mode: 'general' | 'decision'; workspaceId: string; providerId?: string; model?: string }
 export type ReviewVerdict = 'related' | 'unrelated' | 'unknown' | 'skipped' | 'stale';
 export interface Settings {
@@ -32,21 +27,10 @@ export interface Settings {
   providers: AIProvider[];
   review: ReviewOptions;
   quickRead: QuickReadOptions;
+  videoAssistant: VideoAssistantOptions;
   planMaxLength: number;
 }
 export type ContentSettings = Settings & { reviewRevision?: number };
-export interface VideoEvent {
-  kind: EventKind;
-  bvid: string;
-  title: string;
-  tags: string[] | null;
-  at: number;
-  reason: string;
-}
-export interface Suggestion { action?: 'add' | 'remove'; side: Side; field: WordField; word: string; reason: string }
-export interface Suggestions { summary: string; suggestions: Suggestion[] }
-export interface Clarification { summary: string; question: string; options: string[] }
-export interface ClarificationAnswer { question: string; kind: 'option' | 'custom' | 'skip'; answer: string }
 export interface AnalysisResult extends Suggestions {
   at: number;
   plan: string;
@@ -81,11 +65,12 @@ export type Counts = Record<EventKind, number>;
 export interface Snapshot { preferences: Preferences; counts: Counts; reviewError?: string }
 export type Message =
   | VideoMessage
+  | { type: 'video-density'; density: ChapterDensity }
   | CommentMessage
   | { type: 'suggest'; term: string }
   | { type: 'theme' }
   | { type: 'rules' }
-  | { type: 'open-settings' }
+  | { type: 'open-settings'; section?: 'videoAssistant' }
   | { type: 'tags'; bvid: string }
   | { type: 'review'; bvid: string; title: string; durationSeconds?: number | null }
   | { type: 'record'; event: VideoEvent }

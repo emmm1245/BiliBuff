@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, '..');
 let checked = 0, errors = 0;
 function visit(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (['node_modules', '.wxt', '.output'].includes(entry.name)) continue;
+    if (['node_modules', '.wxt', '.output', '.artifacts'].includes(entry.name)) continue;
     const file = path.join(directory, entry.name);
     if (entry.isDirectory()) visit(file);
     else if (/\.tsx?$/.test(entry.name)) {

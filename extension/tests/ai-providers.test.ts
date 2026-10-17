@@ -2,11 +2,13 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { aiConnection, providerOrigin, providerUrl, validateProviders } from '../src/ai-providers';
 import { migrateSettings, modelParameters, validateBackup, validateSettings } from '../src/core';
+import { videoParameters } from '../src/video-ai';
 import type { Preferences } from '../src/types';
 
 const { contains } = vi.hoisted(() => ({ contains: vi.fn() }));
 vi.mock('wxt/browser', () => ({ browser: { permissions: { contains }, storage: { local: { get: async () => ({}) } } } }));
 import { requestAI } from '../src/ai-request';
+import { suggestionsSchema } from '../src/analysis/schemas';
 
 let prefs: Preferences;
 beforeEach(() => {
@@ -54,16 +56,54 @@ test('兼容参数不混入专用参数；备份能保留多服务和显式空�
 });
 
 test('未授权站点不发送请求；授权后只向选择的地址发送一次，免密服务不携带旧密钥', async () => {
-  const fetch = vi.fn().mockImplementation(async () => new Response('{}')); vi.stubGlobal('fetch', fetch);
+  const fetch = vi.fn().mockImplementation(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: '{}' } }] })); vi.stubGlobal('fetch', fetch);
   const selection = { providerId: 'custom-one', model: 'my-model' };
   contains.mockResolvedValueOnce(false);
-  await expect(requestAI(prefs, selection, {}, new AbortController().signal, response => response.text(), '计划分析')).rejects.toThrow('授权');
+  await expect(requestAI(prefs, selection, { messages: [{ role: 'user', content: 'test' }] }, new AbortController().signal, value => value, '计划分析')).rejects.toThrow('授权');
   expect(fetch).not.toHaveBeenCalled();
-  await requestAI(prefs, selection, { stream: true }, new AbortController().signal, response => response.text(), '计划分析');
+  await requestAI(prefs, selection, { stream: false, messages: [{ role: 'user', content: 'test' }] }, new AbortController().signal, value => value, '计划分析');
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0]![0]).toBe('https://example.com/v1/chat/completions');
-  expect(fetch.mock.calls[0]![1]).toMatchObject({ credentials: 'omit', redirect: 'error', headers: { Authorization: 'Bearer custom-key' } });
+  expect(fetch.mock.calls[0]![1]).toMatchObject({ credentials: 'omit', redirect: 'error' });
+  expect(new Headers(fetch.mock.calls[0]![1].headers).get('authorization')).toBe('Bearer custom-key');
   prefs.providerKeys = {};
-  await requestAI(prefs, selection, {}, new AbortController().signal, response => response.text(), '计划分析');
-  expect(fetch.mock.calls[1]![1].headers).not.toHaveProperty('Authorization');
+  await requestAI(prefs, selection, { messages: [{ role: 'user', content: 'test' }] }, new AbortController().signal, value => value, '计划分析');
+  expect(new Headers(fetch.mock.calls[1]![1].headers).has('authorization')).toBe(false);
+});
+
+test('兼容端点使用DeepSeek视频模型时保留关闭思考，不额外发送不受支持的none强度', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: '视频总结' } }] }));
+  vi.stubGlobal('fetch',fetch);
+  const selection = { providerId: 'custom-one', model: 'deepseek-flash', effort: 'off' as const };
+  await requestAI(prefs,selection,{ ...videoParameters(selection,false), stream: false, messages: [{ role: 'user', content: '字幕' }] },
+    new AbortController().signal,value => value,'视频总结');
+  const input = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+  expect(input.thinking).toEqual({ type: 'disabled' }); expect(input).not.toHaveProperty('reasoning_effort');
+  expect(input).not.toHaveProperty('response_format');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+
+test.each([false, true])('兼容服务在流式%s结构化调用中发送服务端字段约束，只请求一次', async stream => {
+  const output = { summary: '完成', suggestions: [] };
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => stream
+    ? new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(output) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`)
+    : Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] }));
+  vi.stubGlobal('fetch',fetch);
+  const result = await requestAI(prefs,{ providerId: 'custom-one', model: 'my-model' },
+    { stream, messages: [{ role: 'user', content: '分析' }] }, new AbortController().signal,value => value,'计划分析', { schema: suggestionsSchema });
+  expect(result).toEqual(output);
+  const input = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+  expect(input).toMatchObject({ stream, response_format: { type: 'json_schema', json_schema: { strict: true,
+    schema: { type: 'object', properties: { summary: { type: 'string' }, suggestions: { type: 'array' } } } } } });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test('兼容服务拒绝结构化格式时直接报错，不降级或补发请求', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ error: { message: 'unsupported response_format' } }, { status: 400 }));
+  vi.stubGlobal('fetch',fetch);
+  await expect(requestAI(prefs,{ providerId: 'custom-one', model: 'my-model' },
+    { stream: false, messages: [{ role: 'user', content: '分析' }] }, new AbortController().signal,value => value,'计划分析',
+    { schema: suggestionsSchema })).rejects.toThrow('unsupported response_format');
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

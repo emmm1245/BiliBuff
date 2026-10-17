@@ -1,0 +1,55 @@
+/* 生成共用组件和流式正文所需样式，不加载会改写B站节点的全局重置。 */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@import 'streamdown/styles.css';
+@source './';
+@source '../../node_modules/streamdown/dist/*.js';
+@source '../../node_modules/@streamdown/cjk/dist/*.js';
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *), :host([data-theme=dark]) &);
+@theme inline {
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 14px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --color-background: var(--page, var(--surface, #fff));
+  --color-foreground: var(--text, #18191c);
+  --color-card: var(--surface, #fff);
+  --color-card-foreground: var(--text, #18191c);
+  --color-primary: var(--accent, #008ac5);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--field, #f6f7f8);
+  --color-secondary-foreground: var(--text, #18191c);
+  --color-muted: var(--field, #f6f7f8);
+  --color-muted-foreground: var(--muted, #61666d);
+  --color-border: var(--border, #e3e5e7);
+  --color-input: var(--border, #e3e5e7);
+  --color-ring: var(--blue, #00aeec);
+  --color-destructive: var(--pink, #d94b7d);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+.bb-markdown { min-width: 0; white-space: normal; overflow-wrap: anywhere; font: inherit; }
+.bb-markdown p { white-space: normal; }
+.bb-markdown pre { white-space: pre; max-width: 100%; overflow: auto; }
+.bb-markdown ul { list-style-type: disc; }
+.bb-markdown ol { list-style-type: decimal; }
+.bb-markdown li::before { content: none; }
+.bb-markdown a { color: var(--accent, #008ac5); }
+@media (prefers-reduced-motion: reduce) {
+  [data-sd-animate], [data-sd-animate-marker]::marker { animation: none !important; }
+}
+
+@keyframes bb-result-in {
+  from { opacity: .72; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.bb-result-reveal { animation: bb-result-in 200ms ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .bb-result-reveal { animation: none; }
+}

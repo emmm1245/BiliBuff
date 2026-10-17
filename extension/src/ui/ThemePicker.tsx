@@ -1,4 +1,5 @@
 // 同步设置页与留白首页的外观，迁移旧选择并缓存设置页首屏主题。
+import { Button } from './primitives/button';
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { parseTheme, THEME_KEY, type Theme } from '../theme';
@@ -39,7 +40,7 @@ export function ThemePicker() {
   return <div className={styles.themePicker}>
     <span>外观</span>
     <div className={styles.themeOptions} role="group" aria-label="外观主题">
-      {(['system', 'light', 'dark'] as const).map(value => <button type="button" key={value} aria-pressed={theme === value} onClick={() => { void change(value); }}>{({ system: '跟随系统', light: '浅色', dark: '深色' })[value]}</button>)}
+      {(['system', 'light', 'dark'] as const).map(value => <Button type="button" key={value} aria-pressed={theme === value} onClick={() => { void change(value); }}>{({ system: '跟随系统', light: '浅色', dark: '深色' })[value]}</Button>)}
     </div>
     {error && <small role="alert">{error}</small>}
   </div>;

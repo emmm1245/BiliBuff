@@ -1,47 +1,52 @@
 // 跟随当前播放内容协调工作台，阻止旧任务覆盖新页面并连接字幕、问答和下载操作。
 import { browser } from 'wxt/browser';
 import { send } from './client';
-import { safeFilename, subtitleText, videoRoute } from './video-data';
+import { safeFilename, subtitleText, videoRoute, videoTimeline } from './video-data';
 import { createVideoPanel } from './video-panel';
+import { adSkipTarget, createVideoPlayerNavigation } from './video-player';
 import type { VideoPanelState } from './video-panel';
 import type { ContentSettings } from './types';
-import type { MediaChoice, VideoCache, VideoProgress, VideoSelection, VideoSource, VideoTask } from './video-types';
+import type { VideoProgress, VideoTask } from './video-types';
 import type { Theme } from './theme';
 
 export function startVideoReading(initial: ContentSettings, signal: AbortSignal) {
-  let settings = initial, currentRoute = '', generation = 0, requestId = '', language = '', selectionEdited = false;
+  let settings = initial, currentRoute = '', generation = 0, mediaGeneration = 0, requestId = '', language = '', automaticPaused = false, automaticRunning = false;
+  const attempted = new Set<string>(), skippedAds = new Set<number>();
+  const navigation = createVideoPlayerNavigation(seek,signal);
   const state: VideoPanelState = { source: null, cache: null, media: [], busy: false, task: null, preview: '', error: '', status: '',
-    selection: { providerId: initial.ai.providerId ?? 'deepseek', model: initial.ai.model }, providers: initial.providers };
+    question: '', chapterDensity: initial.videoAssistant.chapterDensity, mediaLoading: false, mediaError: '' };
   const view = createVideoPanel({ read: refresh => { void read(refresh); }, language: id => { cancel(); language = id; generation++; state.cache = null; void read(); },
-    analyze: (task,question) => { void analyze(task,question); }, cancel,
-    seek: seconds => {
-      if (!state.source || !isCurrent()) return;
-      const player = document.querySelector<HTMLVideoElement>('#bilibili-player video, .bpx-player-container video');
-      if (player) { player.currentTime = Math.max(0,Math.min(seconds,player.duration || state.source.duration)); view.playback(player.currentTime); }
-    }, export: (format,copy) => { void exportContent(format,copy); }, media: () => { void media(); }, download: id => { void download(id); },
-    clear: () => { void clear(); }, settings: () => { void send({ type: 'open-settings' }).catch(fail); },
-    selection: selection => { selectionEdited = true; state.selection = selection; update(); },
+    analyze: (task,question) => { void analyze(task,question); }, cancel: () => { automaticPaused = true; cancel(); },
+    density: value => { state.chapterDensity = value; update(); void send({ type: 'video-density', density: value }).catch(fail); },
+    seek, export: (format,copy) => { void exportContent(format,copy); }, media: () => { void media(); }, download: id => { void download(id); },
+    clear: () => { void clear(); }, settings: () => { void send({ type: 'open-settings', section: 'videoAssistant' }).catch(fail); },
   });
+  function seek(seconds: number) {
+    if (!state.source || !isCurrent()) return;
+    const player = document.querySelector<HTMLVideoElement>('#bilibili-player video, .bpx-player-container video');
+    if (player) { player.currentTime = Math.max(0,Math.min(seconds,player.duration || state.source.duration)); view.playback(player.currentTime); navigation.playback(player.currentTime); }
+  }
+  function mountNavigation() { navigation.update(videoTimeline(state.source,state.cache),!!state.source?.nativeChapters?.length,state.source?.duration ?? 0); }
   function routeKey() { return JSON.stringify(videoRoute(location.pathname,location.search)); }
   function isCurrent(epoch = generation) { return !signal.aborted && epoch === generation && currentRoute === routeKey(); }
-  function update() { if (signal.aborted) return; view.render(state); if (videoRoute(location.pathname,location.search).bvid) view.mount(); }
+  function update() { if (signal.aborted) return; view.render(state); if (videoRoute(location.pathname,location.search).bvid) view.mount(); mountNavigation(); }
   function fail(error: unknown) { state.error = error instanceof Error ? error.message : '视频助手操作失败，请重试。'; update(); }
   function cancel() {
     if (requestId) { void send({ type: 'video-cancel', requestId }).catch(() => {}); requestId = ''; }
-    state.task = null; state.preview = ''; state.status = '已取消'; update();
+    state.task = null; state.preview = ''; state.chaptersPreview = undefined; state.status = '已取消'; update();
   }
   async function activate() {
     const route = videoRoute(location.pathname,location.search);
-    cancel(); currentRoute = routeKey(); generation++; const epoch = generation;
-    state.source = null; state.cache = null; state.media = []; state.error = ''; state.busy = !!route.bvid; state.status = '正在读取视频…';
+    cancel(); navigation.clear(); skippedAds.clear(); automaticPaused = false; currentRoute = routeKey(); generation++; mediaGeneration++; const epoch = generation;
+    state.source = null; state.cache = null; state.media = []; state.mediaError = ''; state.mediaLoading = false; state.error = ''; state.busy = !!route.bvid; state.status = '正在读取视频…';
     if (!route.bvid) { view.remove(); return; }
     update();
     try {
-      const source = await send<VideoSource>({ type: 'video-source', ...route });
+      const source = await send({ type: 'video-source', ...route });
       if (!isCurrent(epoch)) return;
       state.source = source;
       language = source.tracks.find(t => t.id === 'zh-CN' || t.id === 'zh-Hans' || t.id === 'zh')?.id || source.tracks.find(t => t.id.includes('zh'))?.id || source.tracks[0]?.id || '';
-      state.busy = false;
+      state.busy = false; void media();
       if (language) await read();
       else { state.status = '暂无字幕，可登录后刷新。'; state.error = source.subtitleError ?? ''; update(); }
     } catch (error) { if (isCurrent(epoch)) { state.busy = false; fail(error); } }
@@ -53,30 +58,46 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
     cancel(); const epoch = ++generation, source = state.source;
     state.busy = true; state.error = ''; state.status = refresh ? '正在刷新字幕…' : '正在读取字幕…'; update();
     try {
-      const cache = await send<VideoCache>({ type: 'video-subtitles', bvid: source.bvid, cid: source.cid, language, refresh });
+      const cache = await send({ type: 'video-subtitles', bvid: source.bvid, cid: source.cid, language, refresh });
       if (!isCurrent(epoch)) return;
       state.cache = cache; state.status = '';
     } catch (error) { if (isCurrent(epoch)) fail(error); }
-    finally { if (isCurrent(epoch)) { state.busy = false; update(); } }
+    finally { if (isCurrent(epoch)) { state.busy = false; update(); void runAutomatic(); } }
   }
   async function analyze(task: VideoTask, question?: string) {
-    if (!state.cache || state.task || !isCurrent()) return;
+    if (!state.cache || state.task || !isCurrent() || (task === 'chapters' && state.source?.nativeChapters?.length)) return;
     const cache = state.cache, epoch = generation, id = crypto.randomUUID(); requestId = id;
-    state.task = task; state.error = ''; state.preview = ''; state.status = task === 'chapters' ? '正在生成章节…' : task === 'chat' ? '正在回答…' : '正在生成总结…'; update();
+    state.task = task; state.question = question ?? ''; state.error = ''; state.preview = ''; state.chaptersPreview = undefined; state.status = task === 'chapters' ? '正在生成章节…' : task === 'chat' ? '正在回答…' : '正在生成总结…'; update();
     try {
-      const next = await send<VideoCache>({ type: 'video-analyze', task, requestId: id, bvid: cache.source.bvid, cid: cache.source.cid, language: cache.language,
-        fingerprint: cache.fingerprint, selection: { ...state.selection }, question });
+      const next = await send({ type: 'video-analyze', task, requestId: id, bvid: cache.source.bvid, cid: cache.source.cid, language: cache.language,
+        fingerprint: cache.fingerprint, question, ...(task === 'chapters' ? { density: state.chapterDensity } : {}) });
       if (!isCurrent(epoch) || requestId !== id) return;
-      state.cache = next; state.status = '已完成'; if (task === 'chat') view.clearQuestion();
+      state.cache = next; if (next.source.nativeChapters?.length) state.source = next.source; state.status = ''; if (task === 'chat') view.clearQuestion();
     } catch (error) { if (isCurrent(epoch) && requestId === id) fail(error); }
-    finally { if (isCurrent(epoch) && requestId === id) { requestId = ''; state.task = null; state.preview = ''; update(); } }
+    finally { if (isCurrent(epoch) && requestId === id) { requestId = ''; state.task = null; state.preview = ''; state.chaptersPreview = undefined; update(); if (!automaticRunning) void runAutomatic(); } }
+  }
+  async function runAutomatic() {
+    if (automaticRunning || automaticPaused || !state.cache || !isCurrent()) return;
+    const epoch = generation; automaticRunning = true;
+    try {
+      for (const task of ['summary','chapters'] as const) {
+        if (!isCurrent(epoch) || automaticPaused || state.task || !state.cache) return;
+        const options = settings.videoAssistant, cache = state.cache;
+        const enabled = task === 'summary' ? options.autoSummary : options.autoChapters;
+        if (!enabled || cache[task] || (task === 'chapters' && state.source?.nativeChapters?.length)) continue;
+        const key = `${cache.source.bvid}:${cache.source.cid}:${cache.language}:${cache.fingerprint}:${task}`;
+        if (attempted.has(key)) continue; attempted.add(key);
+        await analyze(task);
+      }
+    } finally { automaticRunning = false; if (!isCurrent(epoch)) void runAutomatic(); }
   }
   async function media() {
-    if (!state.source || state.busy || !isCurrent()) return;
-    const source = state.source, epoch = generation; state.busy = true; state.error = ''; state.status = '正在读取格式…'; update();
-    try { const result = await send<MediaChoice[]>({ type: 'video-media', bvid: source.bvid, cid: source.cid }); if (isCurrent(epoch)) { state.media = result; state.status = ''; } }
-    catch (error) { if (isCurrent(epoch)) fail(error); }
-    finally { if (isCurrent(epoch)) { state.busy = false; update(); } }
+    if (!state.source || state.mediaLoading || !isCurrent()) return;
+    const source = state.source, epoch = mediaGeneration; state.mediaLoading = true; state.mediaError = ''; update();
+    const current = () => isCurrent() && epoch === mediaGeneration;
+    try { const result = await send({ type: 'video-media', bvid: source.bvid, cid: source.cid }); if (current()) state.media = result; }
+    catch (error) { if (current()) state.mediaError = error instanceof Error ? error.message : '格式读取失败'; }
+    finally { if (current()) { state.mediaLoading = false; update(); } }
   }
   async function download(choice: string) {
     if (!state.source || state.busy || !isCurrent()) return;
@@ -112,25 +133,35 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
   const onMessage = (message: VideoProgress | { type: 'theme-changed'; theme: Theme }) => {
     if (message.type === 'theme-changed') { view.theme(message.theme); return; }
     if (message.type !== 'video-progress' || message.requestId !== requestId || !state.task || !isCurrent()) return;
+    if (message.status) { state.status = message.status; state.preview = ''; }
+    if (message.chapters) state.chaptersPreview = message.chapters;
     if (message.summary) state.preview = message.summary;
     if (message.thinking && !state.preview) state.status = '正在思考…'; update();
   };
   browser.runtime.onMessage.addListener(onMessage);
-  const observer = new MutationObserver(() => { if (state.source && isCurrent()) view.mount(); }); observer.observe(document.body,{ childList: true, subtree: true });
+  const observer = new MutationObserver(() => { if (state.source && isCurrent()) { view.mount(); mountNavigation(); } }); observer.observe(document.body,{ childList: true, subtree: true, attributes: true, attributeFilter: ['data-screen'] });
   const timer = setInterval(() => {
     if (currentRoute !== routeKey()) void activate();
     // 活跃任务通过轻量消息保持现有流式后台的活动，不触发模型或字幕请求。
     if (requestId) void send({ type: 'video-selection' }).catch(() => {});
   },1000);
-  document.addEventListener('timeupdate',event => { const video = event.target; if (video instanceof HTMLVideoElement && video.closest('#bilibili-player, .bpx-player-container') && isCurrent()) view.playback(video.currentTime); },{ capture: true, signal });
-  document.addEventListener('fullscreenchange',() => { if (state.source && isCurrent()) view.mount(); },{ signal });
-  void send<Theme>({ type: 'theme' }).then(theme => { if (!signal.aborted) view.theme(theme); }).catch(() => {});
-  void send<VideoSelection>({ type: 'video-selection' }).then(selection => { if (!signal.aborted && !selectionEdited) { state.selection = selection; update(); } }).catch(fail);
+  document.addEventListener('timeupdate',event => {
+    const video = event.target;
+    if (!(video instanceof HTMLVideoElement) || !video.closest('#bilibili-player, .bpx-player-container') || !isCurrent()) return;
+    view.playback(video.currentTime); navigation.playback(video.currentTime);
+    if (!settings.videoAssistant.autoSkipAds || video.paused || video.seeking || state.source?.nativeChapters?.length) return;
+    const target = adSkipTarget(videoTimeline(state.source,state.cache),video.currentTime,skippedAds);
+    if (target !== null) { seek(target); state.status = '已跳过广告'; update(); }
+  },{ capture: true, signal });
+  document.addEventListener('fullscreenchange',() => { if (state.source && isCurrent()) { view.mount(); mountNavigation(); } },{ signal });
+  void send({ type: 'theme' }).then(theme => { if (!signal.aborted) view.theme(theme); }).catch(() => {});
   void activate();
   signal.addEventListener('abort',() => { cancel(); clearInterval(timer); observer.disconnect(); browser.runtime.onMessage.removeListener(onMessage); view.remove(); },{ once: true });
   return { configure(next: ContentSettings) {
-    settings = next; state.providers = settings.providers;
-    if (!state.providers.some(provider => provider.id === state.selection.providerId)) state.selection = { providerId: settings.ai.providerId ?? 'deepseek', model: settings.ai.model };
+    if (settings.videoAssistant.chapterDensity !== next.videoAssistant.chapterDensity) state.chapterDensity = next.videoAssistant.chapterDensity;
+    settings = next;
+    if (automaticRunning && ((state.task === 'chapters' && !next.videoAssistant.autoChapters) || (state.task === 'summary' && !next.videoAssistant.autoSummary))) cancel();
+    void runAutomatic();
     update();
   } };
 }

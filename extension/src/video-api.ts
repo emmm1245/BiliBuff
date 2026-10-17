@@ -1,15 +1,16 @@
 // 在后台读取B站视频、字幕及媒体地址，只接受已验证的视频编号和本站资源域名。
-import { subtitleRows } from './video-data';
+import { nativeVideoChapters, subtitleRows } from './video-data.ts';
 import type { MediaChoice, VideoSource } from './video-types';
 
 interface ViewData { aid: number; bvid: string; title: string; pages: { page: number; cid: number; part: string; duration: number }[] }
 interface Track { lan: string; lan_doc: string; subtitle_url: string; ai_status?: number }
+interface PlayerMetadata { subtitle?: { subtitles?: Track[] }; view_points?: unknown[] }
 interface PlayData {
   quality: number; format: string; accept_quality?: number[]; accept_description?: string[];
-  durl?: { url: string; size: number; length: number }[];
+  durl?: { url: string; backup_url?: string[]; size: number; length: number }[];
   dash?: { video: Stream[]; audio: Stream[] };
 }
-interface Stream { id: number; baseUrl?: string; base_url?: string; codecs: string; codecid?: number; bandwidth: number; mimeType?: string; mime_type?: string }
+interface Stream { id: number; baseUrl?: string; base_url?: string; backupUrl?: string[]; backup_url?: string[]; codecs: string; codecid?: number; bandwidth: number; mimeType?: string; mime_type?: string }
 const details = new Map<string,{ data: ViewData; at: number }>();
 export async function biliVideoJSON<T>(path: string): Promise<T> {
   const response = await fetch(`https://api.bilibili.com${path}`,{ credentials: 'include', signal: AbortSignal.timeout(15000) });
@@ -33,7 +34,7 @@ export async function confirmedPart(bvid: string, cid: number) {
   return { data, part };
 }
 async function tracks(aid: number, cid: number) {
-  const data = await biliVideoJSON<{ subtitle?: { subtitles?: Track[] } }>(`/x/player/wbi/v2?aid=${aid}&cid=${cid}`);
+  const data = await biliVideoJSON<PlayerMetadata>(`/x/player/wbi/v2?aid=${aid}&cid=${cid}`);
   return data.subtitle?.subtitles ?? [];
 }
 export async function readVideoSource(bvid: string, page: number, cid?: number): Promise<VideoSource> {
@@ -41,7 +42,11 @@ export async function readVideoSource(bvid: string, page: number, cid?: number):
   if (!part) throw new Error('没有找到对应分P，请刷新视频页。');
   const source: VideoSource = { bvid, aid: data.aid, cid: part.cid, page: part.page, title: data.title, part: part.part, duration: part.duration,
     parts: data.pages.map(p => ({ page: p.page, cid: p.cid, title: p.part, duration: p.duration })), tracks: [] };
-  try { source.tracks = (await tracks(data.aid,part.cid)).map(t => ({ id: t.lan, name: t.lan_doc, ai: !!t.ai_status || t.lan.startsWith('ai-') })); }
+  try {
+    const metadata = await biliVideoJSON<PlayerMetadata>(`/x/player/wbi/v2?aid=${data.aid}&cid=${part.cid}`);
+    source.tracks = (metadata.subtitle?.subtitles ?? []).map(t => ({ id: t.lan, name: t.lan_doc, ai: !!t.ai_status || t.lan.startsWith('ai-') }));
+    source.nativeChapters = nativeVideoChapters(metadata.view_points,source.duration);
+  }
   catch (error) { source.subtitleError = error instanceof Error ? error.message : '字幕列表读取失败。'; }
   return source;
 }
@@ -64,6 +69,13 @@ export function mediaResource(value: string) {
   if (url.protocol !== 'https:' || url.username || url.password || !['bilivideo.com','bilivideo.cn','hdslb.com'].some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))) throw new Error('媒体资源域名未受支持，未发起下载。');
   return url.href;
 }
+export function mediaStreamResource(candidates: string[]) {
+  const supported: string[] = [];
+  for (const candidate of candidates) {
+    try { supported.push(mediaResource(candidate)); } catch { /* 不支持的节点不能阻断同一格式的备用地址。 */ }
+  }
+  return supported.find(value => { const host = new URL(value).hostname; return host === 'bilivideo.com' || host.endsWith('.bilivideo.com'); }) ?? supported[0];
+}
 export async function videoMedia(bvid: string, cid: number): Promise<(MediaChoice & { url: string })[]> {
   await confirmedPart(bvid,cid);
   const base = `/x/player/playurl?bvid=${encodeURIComponent(bvid)}&cid=${cid}&fnver=0`;
@@ -73,15 +85,18 @@ export async function videoMedia(bvid: string, cid: number): Promise<(MediaChoic
   const combined = results[0];
   if (combined.status === 'fulfilled' && combined.value.durl?.length === 1 && combined.value.format?.startsWith('mp4')) {
     const data = combined.value, stream = data.durl![0]!;
-    choices.push({ id: 'mp4', kind: 'video', combined: true, label: `${qualityName(data,data.quality)} · MP4 · 含声音`, quality: data.quality, codec: 'MP4', extension: 'mp4', size: stream.size, url: mediaResource(stream.url) });
+    const url = mediaStreamResource([stream.url,...(stream.backup_url ?? [])]);
+    if (url) choices.push({ id: 'mp4', kind: 'video', combined: true, label: `${qualityName(data,data.quality)} · MP4 · 含声音`, quality: data.quality, codec: 'MP4', extension: 'mp4', size: stream.size, url });
   }
   const dash = results[1];
   if (dash.status === 'fulfilled' && dash.value.dash) {
     const data = dash.value;
     for (const [kind,streams] of [['video',data.dash!.video],['audio',data.dash!.audio]] as const) for (const stream of streams ?? []) {
+      const url = mediaStreamResource([stream.baseUrl || stream.base_url || '',...(stream.backupUrl ?? stream.backup_url ?? [])]);
+      if (!url) continue;
       const codec = stream.codecs || '', extension = (stream.mimeType || stream.mime_type || '').includes('webm') ? 'webm' : kind === 'audio' ? 'm4a' : 'mp4';
       choices.push({ id: `${kind}:${stream.id}:${codec}`, kind, combined: false, quality: stream.id, codec, extension,
-        label: kind === 'video' ? `${qualityName(data,stream.id)} · ${codec.split('.')[0]} · 仅画面` : `${Math.round(stream.bandwidth/1000)} kbps · ${extension.toUpperCase()} 音频`, url: mediaResource(stream.baseUrl || stream.base_url || '') });
+        label: kind === 'video' ? `${qualityName(data,stream.id)} · ${codec.split('.')[0]} · 仅画面` : `${Math.round(stream.bandwidth/1000)} kbps · ${extension.toUpperCase()} 音频`, url });
     }
   }
   if (!choices.length) throw new Error('未取得可下载的媒体地址，请确认已登录且视频可正常播放。');

@@ -1,4 +1,5 @@
 // 协调留白搜索区的展开收起、原站历史联想、键盘输入和历史同步。
+import { closeIcon, chevronRightIcon } from './ui/static-icons';
 import { createSearchHistory } from './search-history';
 import type { SearchHistoryEntry } from './search';
 
@@ -61,11 +62,14 @@ export function attachSearchPanel(root: ShadowRoot, suggest: (term: string) => P
       button.textContent = word; button.addEventListener('click', () => { void search(word); });
       if (isHistory) {
         const item = document.createElement('span'); item.className = 'history-item';
-        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'history-remove'; remove.textContent = '×';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'history-remove'; remove.innerHTML = closeIcon;
         remove.setAttribute('aria-label', `删除搜索历史 ${word}`);
         remove.addEventListener('click', () => { void getHistory().remove(word).catch(() => showNotice('没能删除，请稍后重试。')); });
         item.append(button, remove); list.append(item);
-      } else list.append(button);
+      } else {
+        button.insertAdjacentHTML('beforeend', chevronRightIcon);
+        list.append(button);
+      }
     }
     showNotice(values.length ? '' : isHistory ? '还没有搜索历史' : '没有相关联想，回车直接搜索');
     panel.hidden = false; input.setAttribute('aria-expanded', 'true');
