@@ -10,11 +10,13 @@ export function adSkipTarget(chapters: VideoTimelineChapter[], seconds: number, 
 }
 export function createVideoPlayerNavigation(seek: (seconds: number) => void, signal: AbortSignal) {
   const host = document.createElement('div'); host.id = 'bf-player-chapters';
+  // 页面会重置 div 外边距，放在宿主内联样式中保留原生间距。
+  host.style.margin = '0 10px';
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>
-    :host{display:inline-flex;position:relative;pointer-events:auto;align-items:center;margin-left:16px;font:14px/22px "PingFang SC",HarmonyOS_Regular,"Helvetica Neue","Microsoft YaHei",sans-serif;color:rgba(255,255,255,.8)}*{box-sizing:border-box}
-    button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}button:focus-visible{outline:2px solid #00aeec;outline-offset:2px}.trigger{display:flex;align-items:center;gap:2px;padding:0;max-width:190px;white-space:nowrap;height:22px}.trigger span{overflow:hidden;text-overflow:ellipsis}.trigger svg{width:18px;height:18px;flex:none}.trigger:hover{color:#fff}
-    .menu{position:fixed;inset:auto;margin:0;padding:0;border:0;border-radius:2px;background:rgba(20,20,20,.9);color:rgba(255,255,255,.8);width:210px;max-width:calc(100vw - 24px);max-height:240px;overflow:auto;scrollbar-width:thin;font:12px/30px "PingFang SC",HarmonyOS_Regular,"Helvetica Neue","Microsoft YaHei",sans-serif}.menu::backdrop{background:transparent}
+    :host{display:flex;position:relative;pointer-events:auto;align-items:center;align-self:flex-start;flex:1 0 auto;width:36px;min-width:45px;max-width:240px;height:22px;font:14px/22px "PingFang SC",HarmonyOS_Regular,"Helvetica Neue","Microsoft YaHei",sans-serif;color:rgba(255,255,255,.8)}*{box-sizing:border-box}
+    button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}button:focus-visible{outline:2px solid #00aeec;outline-offset:2px}.trigger{display:flex;align-items:center;padding:0;width:100%;min-width:0;white-space:nowrap;height:22px}.trigger span{flex:1 1 auto;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis}.trigger svg{width:18px;height:18px;flex:none}.trigger:hover{color:#fff}
+    .menu{position:fixed;inset:auto;margin:0;padding:0;border:0;border-radius:2px;background:rgba(20,20,20,.9);color:rgba(255,255,255,.8);width:210px;max-width:calc(100vw - 24px);max-height:320px;overflow:auto;scrollbar-width:thin;font:12px/30px "PingFang SC",HarmonyOS_Regular,"Helvetica Neue","Microsoft YaHei",sans-serif}.menu::backdrop{background:transparent}
     .menu button{display:block;width:100%;padding:0 20px;min-height:30px;line-height:30px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.menu button:hover{background:rgba(255,255,255,.1);color:#fff}.menu button[aria-current=true]{color:#00aeec}.menu:popover-open{animation:bb-player-menu-in .12s ease-out}@keyframes bb-player-menu-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.menu:popover-open{animation:none}}
   </style><button class="trigger" aria-label="AI章节导航" aria-expanded="false" title="AI 生成章节"><span>章节</span>${chevronRightIcon}</button><div class="menu" popover="auto" aria-label="AI章节"></div>`;
   const trigger = root.querySelector<HTMLButtonElement>('.trigger')!, menu = root.querySelector<HTMLElement>('.menu')!;
@@ -23,9 +25,10 @@ export function createVideoPlayerNavigation(seek: (seconds: number) => void, sig
   function open() {
     clearTimeout(hideTimer);
     if (menu.matches(':popover-open')) return;
-    const rect = trigger.getBoundingClientRect(); menu.showPopover();
-    menu.style.left = `${Math.max(12,Math.min(rect.left,innerWidth-menu.offsetWidth-12))}px`;
-    menu.style.top = `${Math.max(12,rect.top-menu.offsetHeight-6)}px`;
+    const rect = host.getBoundingClientRect(); menu.showPopover();
+    // 原生菜单以章节入口左侧 36px、底部上方 41px 为锚点。
+    menu.style.left = `${Math.max(12,Math.min(rect.left-36,innerWidth-menu.offsetWidth-12))}px`;
+    menu.style.top = `${Math.max(12,rect.bottom-menu.offsetHeight-41)}px`;
   }
   function closeLater() { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (menu.matches(':popover-open')) menu.hidePopover(); },160); }
   host.addEventListener('pointerenter',open);
@@ -46,7 +49,8 @@ export function createVideoPlayerNavigation(seek: (seconds: number) => void, sig
     if (!controls) { clear(); return; }
     if (host.parentElement !== controls) {
       if (!controls.classList.contains('bpx-player-control-bottom-left-viewpoint')) { controls.classList.add('bpx-player-control-bottom-left-viewpoint'); expandedControl = controls; }
-      controls.append(host);
+      const time = controls.querySelector('.bpx-player-ctrl-time');
+      if (time) time.after(host); else controls.append(host);
     }
     const key = JSON.stringify(next);
     if (key !== signature) {

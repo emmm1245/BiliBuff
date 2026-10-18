@@ -3,10 +3,11 @@ import { browser } from 'wxt/browser';
 import { send } from '../client';
 import { classify, requiresTags } from './rules';
 import { parseDuration } from '../watching/logic';
+import { homeSkeleton } from './home-skeleton';
 import type { ContentSettings, EventKind, ReviewVerdict, VideoEvent } from '../types';
-interface CardData { title: string; bvid: string; durationSeconds: number | null; ad: boolean; special: boolean; key: string }
+interface CardData { title: string; bvid: string; durationSeconds: number | null; ad: boolean; special: boolean; specialName: string; key: string }
 interface CardState extends CardData {
-  element: HTMLElement; near: boolean; visible: boolean; revealed: boolean;
+  element: HTMLElement; near: boolean; visible: boolean; seen: boolean; revealed: boolean;
   mask: HTMLElement | null; inertChildren: Map<HTMLElement, boolean>;
 }
 
@@ -37,13 +38,18 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
   style.textContent = `
     html.bf-hide-carousel .recommended-swipe { display: none !important; }
     .bf-card, .bf-blocked { position: relative !important; }
-    .bf-highlight { outline: 2px solid #22b89a !important; outline-offset: 3px; border-radius: 6px; }
+    .bf-highlight { outline: 3px solid rgb(251 114 153 / 80%) !important; outline-offset: 3px; border-radius: 6px;
+      box-shadow: 0 0 0 2px rgb(251 114 153 / 28%), 0 0 12px 2px rgb(251 114 153 / 40%), 0 0 24px 3px rgb(251 114 153 / 26%) !important; }
     .bf-blocked > :not(.bf-mask) { visibility: hidden !important; pointer-events: none !important; }
     .bf-blocked > :not(.bf-mask) * { visibility: hidden !important; }
     .bf-mask { position: absolute; inset: 0; z-index: 20; overflow: hidden; border-radius: 6px;
       display: flex; flex-direction: column; gap: 8px; background: var(--bg1, #18191c); }
+    .bf-home-skeleton { display: none; }
+    .bf-home-loading { display: block; }
+    .bf-home-loading > :not(.bf-home-skeleton) { display: none !important; }
+    .bf-home-loading > .bf-home-skeleton { display: block; }
     .bf-cover { flex: 1; min-height: 24px; background: #777b82; border-radius: 6px; }
-    .bf-ai-blocked .bf-cover { display: flex; align-items: center; justify-content: center; color: white; font: 12px/1.5 sans-serif; }
+    .bf-ai-blocked .bf-cover, .bf-special-blocked .bf-cover { display: flex; align-items: center; justify-content: center; color: white; font: 12px/1.5 sans-serif; }
     .bf-lines { display: flex; flex-direction: column; gap: 7px; padding: 2px 0; }
     .bf-lines i { display: block; height: 12px; width: 94%; border-radius: 3px; background: #f4f4f5; }
     .bf-lines i:last-child { width: 60%; }
@@ -82,7 +88,7 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     services.configure(latest);
     reviewEpoch++; reviews.clear();
     launcher.textContent = settings.strict ? 'BiliBuff · 严格' : 'BiliBuff 设置';
-    for (const state of cards.values()) state.revealed = false;
+    for (const state of cards.values()) { state.revealed = false; state.seen = state.visible; }
     scan();
   }
   const refreshRules = () => { void applySettings().catch(showError); };
@@ -92,6 +98,7 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
 
   function readCard(element: HTMLElement): CardData | null {
     const special = element.matches('.floor-card.single-card');
+    const specialName = special ? element.querySelector('.floor-title')?.textContent?.trim() || '特殊业务' : '';
     const promotion = element.matches('.video-card-ad-small-inner');
     const heading = element.querySelector('.bili-video-card__info--tit, .info .title, .info-container .title');
     const link = heading?.closest<HTMLAnchorElement>('a') || heading?.querySelector<HTMLAnchorElement>('a') || element.querySelector<HTMLAnchorElement>('a[href*="/video/BV"]');
@@ -101,7 +108,7 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     const ad = promotion || [...element.querySelectorAll('.bili-video-card__stats--text')].some(label => label.textContent?.trim() === '广告') ||
       [...element.querySelectorAll<HTMLAnchorElement>('a[href]')].some(link => { try { return new URL(link.href).hostname === 'cm.bilibili.com'; } catch { return false; } });
     const durationSeconds = parseDuration(element.querySelector('.bili-video-card__stats__duration, .duration')?.textContent || '');
-    return { title, bvid, durationSeconds, ad, special, key: `${bvid || link?.href}:${title}:${durationSeconds}:${ad}:${special}` };
+    return { title, bvid, durationSeconds, ad, special, specialName, key: `${bvid || link?.href}:${title}:${durationSeconds}:${ad}:${special}:${specialName}` };
   }
 
   function restore(state: CardState) {
@@ -133,15 +140,19 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     const cached = entry && Date.now() - entry.time < TTL;
     const tagState = cached ? 'ready' : !bvid ? 'unavailable' : failed.has(bvid) ? 'failed' : 'loading';
     let result = state.ad && settings.blockAds ? { kind: 'blocked' as const, reason: '广告屏蔽：已开启“遮蔽明确广告”' } :
+      state.special && settings.blockSpecialCards ? { kind: 'blocked' as const, reason: `特殊业务屏蔽：${state.specialName}；已开启“遮住首页特殊业务卡片”` } :
       element.matches('.video-card-ad-small-inner') ? { kind: 'normal' as const, reason: '' } :
       classify(title, cached ? entry.tags : [], settings, state.special ? 'ready' : tagState);
+    if (location.pathname === '/' && !state.ad && !state.special && bvid && tagState === 'loading' && requiresTags(title, settings)) {
+      result = { kind: 'pending', reason: '正在等待视频标签' };
+    }
     if (settings.review.enabled && result.kind === 'highlight' && !state.ad && !state.special && bvid && !state.revealed) {
       if (!reviews.has(state.key) && state.visible) requestReview(state);
       const verdict = reviews.get(state.key);
       if (!verdict || verdict === 'pending') result = { kind: 'pending', reason: 'AI 正在复核与近期计划的相关性' };
       else if (verdict === 'unrelated') result = { kind: 'blocked', reason: 'AI屏蔽' };
     }
-    if (!state.ad && state.visible && !state.revealed && (result.kind === 'highlight' || result.kind === 'blocked') &&
+    if (!state.ad && !state.special && state.seen && !state.revealed && (result.kind === 'highlight' || result.kind === 'blocked') &&
         (cached || !requiresTags(title, settings) || tagState === 'failed')) {
       const key = `${result.kind}:${bvid}`;
       if (bvid && !counted.has(key)) {
@@ -158,7 +169,7 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     if (!state.mask) {
       const mask = document.createElement('div');
       mask.className = 'bf-mask';
-      mask.innerHTML = '<div class="bf-cover"></div><div class="bf-lines" aria-hidden="true"><i></i><i></i></div><div class="bf-details"><div class="bf-actions"><button class="bf-peek" type="button">临时查看</button><button class="bf-retry" type="button" hidden>重试标签</button></div><span class="bf-reason"></span></div>';
+      mask.innerHTML = homeSkeleton + '<div class="bf-cover"></div><div class="bf-lines" aria-hidden="true"><i></i><i></i></div><div class="bf-details"><div class="bf-actions"><button class="bf-peek" type="button">临时查看</button><button class="bf-retry" type="button" hidden>重试标签</button></div><span class="bf-reason"></span></div>';
       mask.querySelector('button')!.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -179,8 +190,11 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     const reason = tagFailed ? result.kind === 'pending' ? `${result.reason}；可重试标签或临时查看` :
       `标签查询失败，本次按标题判断；${result.reason}` : result.reason;
     const aiBlocked = result.reason === 'AI屏蔽';
+    state.mask.classList.toggle('bf-home-loading', location.pathname === '/' && result.kind === 'pending' &&
+      (result.reason === 'AI 正在复核与近期计划的相关性' || tagState === 'loading'));
     state.mask.classList.toggle('bf-ai-blocked', aiBlocked);
-    state.mask.querySelector<HTMLElement>('.bf-cover')!.textContent = aiBlocked ? 'AI屏蔽' : '';
+    state.mask.classList.toggle('bf-special-blocked', state.special);
+    state.mask.querySelector<HTMLElement>('.bf-cover')!.textContent = aiBlocked ? 'AI屏蔽' : state.specialName;
     state.mask.classList.toggle('bf-show-reasons', settings.showMaskReasons);
     state.mask.querySelector<HTMLElement>('.bf-peek')!.title = `${settings.showMaskReasons ? `${reason}；` : ''}本卡片临时显示，保存设置后重新检查`;
     const label = state.mask.querySelector<HTMLElement>('.bf-reason')!;
@@ -266,7 +280,7 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
   const visible = new IntersectionObserver(entries => {
     for (const entry of entries) {
       const state = cards.get(entry.target as HTMLElement);
-      if (state) { state.visible = entry.isIntersecting; render(state); }
+      if (state) { state.visible = entry.isIntersecting; state.seen ||= state.visible; render(state); }
     }
   });
 
@@ -300,10 +314,10 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
       }
       if (state && state.key !== data.key) {
         restore(state);
-        Object.assign(state, data, { revealed: false });
+        Object.assign(state, data, { revealed: false, seen: state.visible });
       }
       if (!state) {
-        state = { element, ...data, near: false, visible: false, revealed: false, mask: null, inertChildren: new Map() };
+        state = { element, ...data, near: false, visible: false, seen: false, revealed: false, mask: null, inertChildren: new Map() };
         cards.set(element, state);
         nearby.observe(element);
         visible.observe(element);
@@ -327,7 +341,10 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
         [...record.addedNodes, ...record.removedNodes].some(node =>
           node.nodeType === 3 || (node instanceof Element && !node.matches('.bf-mask')));
     });
-    if (!relevant || scanTimer) return;
+    if (!relevant) return;
+    // 首页卡片更新后，在下一次绘制前接管，避免复用节点或换一批时闪出原内容。
+    if (location.pathname === '/') { scan(); return; }
+    if (scanTimer) return;
     scanTimer = setTimeout(() => { scanTimer = undefined; scan(); }, 100);
   });
   observer.observe(document.body, { childList: true, subtree: true, characterData: true,

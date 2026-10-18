@@ -11,7 +11,7 @@ import { createSaveGate } from './save-gate';
 import { errorMessage } from './errors';
 export function useSettingsDraft(analysis: ReturnType<typeof useAnalysisSession>) {
   const { busy, busyRef, pendingRef, pendingAnalysis, abort } = analysis;
-  const [tab, setTab] = useState<Tab>(() => location.hash === '#videoAssistant' ? 'videoAssistant' : 'rules');
+  const [tab, setTab] = useState<Tab>(() => ['videoAssistant','browse','home'].includes(location.hash.slice(1)) ? location.hash.slice(1) as Tab : 'rules');
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [baseline, setBaseline] = useState<Settings | null>(null);

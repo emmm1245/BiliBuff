@@ -1,4 +1,4 @@
-// 装配七个设置面板，草稿、分析会话和备份分别由对应功能状态管理。
+// 装配独立功能设置，草稿、分析会话和备份分别由对应功能状态管理。
 import { Button } from './primitives/button';
 import { Textarea } from './primitives/textarea';
 import { Card } from './primitives/card';
@@ -15,6 +15,7 @@ import { QuickReadSettings } from './QuickReadSettings';
 import { VideoAssistantSettings } from './VideoAssistantSettings';
 import { ReviewSettings } from './ReviewSettings';
 import { SearchHomeSettings } from './SearchHomeSettings';
+import { BrowseSettings } from './BrowseSettings';
 import { DebugLogs } from './DebugLogs';
 import { StorageUsage } from './StorageUsage';
 import { AnalysisInteraction, AnalysisStreamingPreview, ClarificationHistory } from './AnalysisInteraction';
@@ -38,14 +39,16 @@ export function App() {
   const { includeKey, setIncludeKey, imported, setImported, exportData, importData } = useBackup({ busy, waitForPlan, load, setStatus, setSaving });
   const runAnalysis = (followup?: AnalysisFollowup) => analysis.runAnalysis({ draft, waitForPlan, refresh, setStatus }, followup);
   if (!snapshot || !draft) return <main className={styles.main}><h1>BiliBuff · 哔哩哔哩</h1><p role="status">{status || '正在读取本机设置……'}</p><Button onClick={() => void reload()}>重新读取</Button></main>;
-  const { counts, preferences } = snapshot;
+  const { counts, sampleCounts, preferences } = snapshot;
   const result = analysisCleared ? null : preferences.result;
   const planTooLong = plan.length > preferences.settings.planMaxLength;
   let connectionError = '';
   let analysisService = '';
   try { const connection = aiConnection(preferences, preferences.settings.ai); analysisService = connection.provider.name; }
   catch (error) { connectionError = errorMessage(error); }
-  const ready = counts.watched >= preferences.settings.minWatched && counts.blocked >= preferences.settings.minBlocked && !connectionError && Boolean(plan.trim()) && !planTooLong;
+  const autoSamples = preferences.settings.autoSamples;
+  const samplesReady = autoSamples ? sampleCounts.watched + sampleCounts.blocked > 0 : sampleCounts.watched >= preferences.settings.minWatched && sampleCounts.blocked >= preferences.settings.minBlocked;
+  const ready = samplesReady && !connectionError && Boolean(plan.trim()) && !planTooLong;
   const awaitingAnswer = Boolean(pendingAnalysis);
   const waiting = dirty || planSaving || saving;
   const saveMessage = conflict ? '保存已暂停' : saveError || planError ? '有修改未保存' : saving || planSaving ? '正在保存…' : dirty ? '等待保存…' : '已自动保存';
@@ -53,7 +56,7 @@ export function App() {
     <aside className={styles.sidebar}>
       <div className={styles.brand}><span className={styles.brandIcon}><BrandIcon /></span><div>BiliBuff<span>哔哩哔哩</span></div></div>
       <SettingsNavigation tab={tab} onChange={changeTab} />
-      <div className={styles.sidebarBottom}><ThemePicker /><p>上B站，学东西，有个Buff更顺手。</p></div>
+      <div className={styles.sidebarBottom}><ThemePicker /><p>刷B站，有个Buff更顺手~</p></div>
     </aside>
     <main className={styles.main}>
       <header className={styles.pageHeader}><h1>{tabTitles[tab]}</h1><span className={`${styles.saveBadge} ${saveError || planError || conflict ? styles.saveWarning : ''}`} role="status"><Icon name="check" />{saveMessage}</span></header>
@@ -67,6 +70,7 @@ export function App() {
           {snapshot.reviewError && <p className={styles.banner}>最近一次 AI 复核未完成：{snapshot.reviewError}</p>}
         </>}
         {tab === 'home' && <SearchHomeSettings draft={draft} setDraft={setDraft} />}
+        {tab === 'browse' && <BrowseSettings draft={draft} setDraft={setDraft} plan={plan} onEditPlan={() => changeTab('analysis')} onServices={() => changeTab('services')} />}
         {tab === 'quickRead' && <QuickReadSettings draft={draft} setDraft={setDraft} onServices={() => changeTab('services')} />}
         {tab === 'videoAssistant' && <VideoAssistantSettings draft={draft} setDraft={setDraft} onServices={() => changeTab('services')} />}
         {tab === 'services' && <AIServiceSettings draft={draft} setDraft={setDraft} keyInput={keyInput} setKeyInput={setKeyInput} providerKeys={providerKeys} setProviderKeys={setProviderKeys} />}
@@ -82,14 +86,19 @@ export function App() {
       </fieldset>
       {tab === 'data' && <><StorageUsage /><DebugLogs /></>}
       {tab === 'analysis' && <>
-        <Card className={styles.card}><h2>近期计划</h2>
+        <Card className={styles.card}><div className={`${styles.sectionHeading} ${styles.analysisHeading}`}><h2>近期计划</h2>
+          <div className={styles.analysisModes} role="radiogroup" aria-label="计划分析模式">{(['general', 'strict'] as const).map(mode => <label key={mode}><input type="radio" name="analysis-mode" value={mode} checked={draft.analysisMode === mode} disabled={busy || awaitingAnswer || saving || conflict} onChange={() => setDraft({ ...draft, analysisMode: mode })} /><span>{mode === 'general' ? '通用模式' : '严格模式'}</span></label>)}</div>
+          </div>
+          <p className={`${styles.notice} ${styles.analysisModeHint}`}>{draft.analysisMode === 'strict' ? '尽可能屏蔽与计划无关的内容' : '结合计划与样本审慎建议'}</p>
           <Textarea aria-label="近期计划" maxLength={preferences.settings.planMaxLength} rows={4} value={plan} disabled={busy || awaitingAnswer} onChange={event => updatePlan(event.target.value)} placeholder="比如：这两周准备考试，想多看数学和英语的学习视频。" />
-          <div className={styles.planMeta}><span>{plan.length}/{preferences.settings.planMaxLength} 字</span><span>{analysisService || '尚未配置服务'} · {preferences.settings.ai.model || '尚未填写模型'} · <a href="#analysis-settings">分析设置</a></span></div>
+          <div className={styles.planMeta}><span>{plan.length}/{preferences.settings.planMaxLength} 字</span><span>{analysisService || '尚未配置服务'} · {preferences.settings.ai.model || '尚未填写模型'} · <a href="#analysis-settings" onClick={() => { (document.getElementById('analysis-settings') as HTMLDetailsElement).open = true; }}>分析设置</a></span></div>
           {planTooLong && <p className={styles.banner}>计划超出字数上限，请缩短计划或在下方“分析设置”中提高上限。</p>}
-          <div className={styles.sampleProgress}><span data-ready={counts.watched >= preferences.settings.minWatched}>观看样本 {counts.watched}/{preferences.settings.minWatched}</span><span data-ready={counts.blocked >= preferences.settings.minBlocked}>屏蔽样本 {counts.blocked}/{preferences.settings.minBlocked}</span><Button className={styles.textButton} disabled={busy || saving} onClick={() => void refresh().catch(error => setStatus(errorMessage(error)))}>刷新样本</Button></div>
-          {(!plan.trim() || counts.watched < preferences.settings.minWatched || counts.blocked < preferences.settings.minBlocked) && <p className={styles.notice}>填写计划，且两类样本均达标后即可分析。</p>}
+          <div className={styles.sampleProgress}><span data-ready={autoSamples || sampleCounts.watched >= preferences.settings.minWatched}>观看样本 {autoSamples ? '自动' : `${sampleCounts.watched}/${preferences.settings.minWatched}`}</span><span data-ready={autoSamples || sampleCounts.blocked >= preferences.settings.minBlocked}>屏蔽样本 {autoSamples ? '自动' : `${sampleCounts.blocked}/${preferences.settings.minBlocked}`}</span><Button className={styles.textButton} disabled={busy || saving} onClick={() => void refresh().catch(error => setStatus(errorMessage(error)))}>刷新样本</Button></div>
+          {!plan.trim() && <p className={styles.notice}>请先填写近期计划。</p>}
+          {!samplesReady && <p className={styles.notice}>{sampleCounts.watched + sampleCounts.blocked === 0
+            ? '暂无可用于分析的素材，请先积累观看或屏蔽素材。'
+            : <>当前样本未达到手动设置的门槛，暂时无法分析。推荐开启自动选量，由 AI 根据现有素材量选择合适的样本数量。<Button className={styles.textButton} disabled={busy || awaitingAnswer || saving || conflict} onClick={() => setDraft({ ...draft, autoSamples: true })}>开启自动选量</Button></>}</p>}
           <div className={styles.row}><Button className={styles.primary} disabled={!busy && (!ready || waiting || Boolean(saveError || planError) || conflict || awaitingAnswer)} onClick={() => { if (busy) { abort.current?.abort(); setStatus('正在取消分析……'); } else void runAnalysis(); }}>{busy ? '取消分析' : '开始分析'}</Button></div>
-          <p className={styles.notice}>将计划、样本标题、标签和规则发送给所选服务，可能产生费用。</p>
           {connectionError && <div className={styles.banner}>{connectionError}<Button onClick={() => changeTab('services')}>管理服务与密钥</Button></div>}
         </Card>
         {pendingAnalysis && <><AnalysisInteraction key={`${pendingAnalysis.session.messages.length}:${pendingAnalysis.question.question}`} pending={pendingAnalysis}

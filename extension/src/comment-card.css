@@ -17,6 +17,8 @@ details[open] .chevron { transform:rotate(180deg); }
 .body { max-height:min(70vh,620px,calc(100dvh - 156px)); overflow:auto; overscroll-behavior:contain; padding:0 14px 14px; scrollbar-width:thin; }
 p { margin:0 0 10px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .muted, small { color:var(--muted); font-size:12px; }
+.summary-context { display:flex; align-items:center; gap:7px; margin-bottom:4px; cursor:pointer; }
+.summary-context input { margin:0; accent-color:var(--bili-blue); }
 .error { color:light-dark(#996000,#e7b659); }
 .actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
 button, select { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:5px 9px; cursor:pointer; max-width:100%; }

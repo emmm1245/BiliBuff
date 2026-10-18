@@ -6,6 +6,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../src/client', () => ({ send }));
 vi.mock('wxt/browser', () => ({ browser: { permissions: { contains: vi.fn().mockResolvedValue(true) }, storage: { local: { get: async () => ({}) } } } }));
 import { analyze, type AnalysisTurn } from '../src/analysis';
+import { STRICT_ANALYSIS_INSTRUCTION, SYSTEM_PROMPT } from '../src/analysis/prompt';
 
 const prefs = (): Preferences => ({ schemaVersion: 1, revision: 0, settings: { ...migrateSettings(), minWatched: 1, minBlocked: 1 }, plan: '备考', apiKey: 'test-key', result: null });
 const record = (kind: VideoEvent['kind']): VideoEvent => ({ kind, bvid: `BV${kind}`, title: '数学课', tags: ['数学'], at: 1, reason: '' });
@@ -26,6 +27,72 @@ function pending(turn: AnalysisTurn) {
   return turn;
 }
 beforeEach(() => { send.mockReset(); vi.unstubAllGlobals(); });
+test.each([{ watched: 2, blocked: 3 }, { watched: 20, blocked: 150 }, { watched: 0, blocked: 3 }])('自动选量仅发送总量，按模型选择的 %j 条样本进入原有分析', async target => {
+  const value = prefs(); value.settings.autoSamples = true;
+  value.settings.minWatched = 100; value.settings.minBlocked = 1000;
+  const totals = { watched: target.watched ? 80 : 0, blocked: 600 };
+  send.mockImplementation(async message => {
+    if (message.type === 'snapshot') return { preferences: value, counts: { watched: 999, blocked: 999, highlight: 999 }, sampleCounts: totals };
+    if (message.type === 'samples') return {
+      watched: Array.from({ length: message.counts.watched }, () => record('watched')),
+      blocked: Array.from({ length: message.counts.blocked }, () => record('blocked')),
+    };
+  });
+  const fetch = vi.fn().mockResolvedValueOnce(streamResponse(target)).mockResolvedValueOnce(streamResponse(resultResponse));
+  vi.stubGlobal('fetch', fetch);
+  const turn = await analyze(value, value.settings, new AbortController().signal, () => {});
+  expect(send).toHaveBeenCalledWith({ type: 'samples', counts: target });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const selection = JSON.parse(fetch.mock.calls[0]![1].body);
+  const analysis = JSON.parse(fetch.mock.calls[1]![1].body);
+  expect(selection.messages).toHaveLength(2);
+  expect(JSON.parse(selection.messages[1].content)).toEqual(totals);
+  expect(selection.model).toBe(analysis.model);
+  const input = JSON.parse(analysis.messages[1].content);
+  expect(input.watched).toHaveLength(target.watched);
+  expect(input.blocked).toHaveLength(target.blocked);
+  expect(input.plan).toBe(value.plan);
+  expect(turn).toMatchObject({ kind: 'result', result: { sampleCounts: target } });
+});
+
+test.each([{ watched: 3, blocked: 1 }, { watched: 1.5, blocked: 1 }, { watched: 1, blocked: 0 }])('自动选量拒绝超出可用数量、非整数或漏选现有类别：%j', async target => {
+  const value = prefs(); value.settings.autoSamples = true;
+  send.mockResolvedValue({ preferences: value, sampleCounts: { watched: 2, blocked: 3 } });
+  const fetch = vi.fn().mockResolvedValue(streamResponse(target)); vi.stubGlobal('fetch', fetch);
+  await expect(analyze(value, value.settings, new AbortController().signal, () => {})).rejects.toThrow();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls.some(([message]) => message.type === 'samples')).toBe(false);
+});
+
+test('没有素材时自动选量不调用模型', async () => {
+  const value = prefs(); value.settings.autoSamples = true;
+  send.mockResolvedValue({ counts: { watched: 10, blocked: 0, highlight: 10 }, sampleCounts: { watched: 0, blocked: 0 } });
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  await expect(analyze(value, value.settings, new AbortController().signal, () => {})).rejects.toThrow('暂无');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test.each(['general', 'strict'] as const)('计划分析%s模式保留通用提示，仅严格模式追加屏蔽强约束', async mode => {
+  const value = prefs(); value.settings.analysisMode = mode;
+  const fetch = setup(value);
+  await analyze(value, value.settings, new AbortController().signal, () => {});
+  const system = JSON.parse(fetch.mock.calls[0]![1].body).messages[0].content;
+  expect(system).toContain(SYSTEM_PROMPT.trim());
+  expect(system.includes(STRICT_ANALYSIS_INSTRUCTION)).toBe(mode === 'strict');
+  expect(value.settings.strict).toBe(false);
+});
+
+test('严格计划分析在澄清后继续携带屏蔽强约束', async () => {
+  const value = prefs(); value.settings.analysisMode = 'strict';
+  const fetch = setup(value);
+  fetch.mockResolvedValueOnce(streamResponse(questionResponse)).mockResolvedValueOnce(streamResponse(resultResponse));
+  const first = pending(await analyze(value, value.settings, new AbortController().signal, () => {}));
+  await analyze(value, value.settings, new AbortController().signal, () => {}, undefined, {
+    session: first.session, answer: { kind: 'option', question: first.question.question, answer: first.question.options[0]! },
+  });
+  for (const call of fetch.mock.calls) expect(JSON.parse(call[1].body).messages[0].content).toContain(STRICT_ANALYSIS_INSTRUCTION);
+});
+
 test('样本不足不调用模型', async () => {
   send.mockResolvedValue({ watched: [], blocked: [] }); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   await expect(analyze(prefs(), migrateSettings(), new AbortController().signal, () => {})).rejects.toThrow('门槛'); expect(fetch).not.toHaveBeenCalled();

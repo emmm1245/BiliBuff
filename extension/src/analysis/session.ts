@@ -2,6 +2,7 @@
 import { send } from '../client';
 import { validatePlan } from '../core';
 import { aiConnection } from '../ai-providers';
+import { chooseSampleCounts } from './sample-counts';
 import type { AnalysisResult, Clarification, ClarificationAnswer, Preferences, Settings, VideoEvent } from '../types';
 export interface AnalysisSession {
   plan: string;
@@ -18,8 +19,17 @@ export interface AnalysisFollowup { session: AnalysisSession; answer: Clarificat
 export async function prepareSession(prefs: Preferences, draft: Settings, signal: AbortSignal, progress: (text: string) => void): Promise<AnalysisSession> {
   validatePlan(prefs.plan, prefs.settings.planMaxLength);
   aiConnection(prefs, prefs.settings.ai);
-  const { watched, blocked } = await send({ type: 'samples' });
-  if (!prefs.plan.trim() || watched.length < prefs.settings.minWatched || blocked.length < prefs.settings.minBlocked) throw new Error('请先填写计划，并满足两类样本门槛。');
+  let target;
+  if (prefs.settings.autoSamples) {
+    progress('正在根据素材总量自动选择样本数量……');
+    const { sampleCounts } = await send({ type: 'snapshot' });
+    target = await chooseSampleCounts(prefs, sampleCounts, signal);
+    signal.throwIfAborted();
+  }
+  const { watched, blocked } = await send({ type: 'samples', ...(target ? { counts: target } : {}) });
+  if (!prefs.plan.trim() || watched.length < (target?.watched ?? prefs.settings.minWatched) || blocked.length < (target?.blocked ?? prefs.settings.minBlocked)) throw new Error(target
+    ? '当前素材少于自动选定的样本数量，请刷新样本后重试。'
+    : '当前样本未达到手动设置的门槛，推荐在“分析设置 → 计划与样本”中开启自动选量。');
   const work = [...watched, ...blocked].filter(record => !Array.isArray(record.tags));
   let cursor = 0, finished = 0;
   progress(`准备样本：观看 ${watched.length} 条，屏蔽 ${blocked.length} 条；待补标签 ${work.length} 条。`);

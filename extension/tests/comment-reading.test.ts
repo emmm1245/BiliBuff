@@ -47,7 +47,7 @@ test('当前请求逐步预览总览，忽略其他请求与视频，完成后�
   mocks.card.mock.calls[0]![0].analyze(); await vi.advanceTimersByTimeAsync(0);
   const message = requests('comments-analyze')[0]![0], receive = mocks.addListener.mock.calls[0]![0];
   const progress = { type: 'comments-progress', requestId: message.requestId, bvid: 'BVtest', summary: '', thinking: true };
-  receive(progress); expect(state().status).toContain('正在思考'); expect(state().preview).toBe('');
+  receive(progress); expect(state()).toMatchObject({ analyzing: true, preview: '', result: null });
   receive({ ...progress, summary: '错误请求', requestId: 'other' });
   receive({ ...progress, summary: '其他视频', bvid: 'BVother' });
   expect(state().preview).toBe('');
@@ -100,7 +100,7 @@ test('刷新后无需播放即可恢复部分速读，不把缓存当作当前�
   mocks.send.mockImplementation(message => message.type === 'comments-cache' ? Promise.resolve(result) : original(message));
   startCommentReading(settings,controller.signal); await vi.advanceTimersByTimeAsync(0);
   expect(state()).toMatchObject({ result, total: 0, complete: false });
-  expect(state().status).toContain('已恢复部分评论速读缓存');
+  expect(state().loadingCache).toBe(false);
   expect(requests('comments-page')).toHaveLength(0); expect(requests('comments-analyze')).toHaveLength(0);
 });
 
@@ -108,7 +108,7 @@ test('缓存读取失败向用户显示原因，不静默当成没有缓存', as
   const original = mocks.send.getMockImplementation()!;
   mocks.send.mockImplementation(message => message.type === 'comments-cache' ? Promise.reject(new Error('本机存储不可读')) : original(message));
   startCommentReading(migrateSettings(),controller.signal); await vi.advanceTimersByTimeAsync(0);
-  expect(state().error).toContain('本地速读缓存读取失败：本机存储不可读');
+  expect(state().error).toContain('本机存储不可读');
 });
 
 test('慢速缓存查找期间不采集，命中后播放也不重采，只有手动检查更新才采集', async () => {
@@ -151,14 +151,38 @@ test('无模型配置也在首次实际播放时采集，只采集一次并可�
   expect(mocks.copy).toHaveBeenCalledWith(expect.stringContaining('本文件1条'));
   expect(mocks.copy).toHaveBeenCalledWith(expect.stringContaining('[#1]\n有信息量的评论'));
 });
-test('开启自动后严格超过300秒才调用模型，每个视频只自动一次', async () => {
+test('开启自动后默认严格超过180秒才调用模型，每个视频只自动一次', async () => {
   const settings = migrateSettings(); settings.quickRead.auto = true;
   const reader = startCommentReading(settings,controller.signal);
   reader.watch('BVtest',0,true); await vi.advanceTimersByTimeAsync(0);
-  reader.watch('BVtest',300,true); expect(requests('comments-analyze')).toHaveLength(0);
-  reader.watch('BVtest',301,true); await vi.advanceTimersByTimeAsync(0);
+  reader.watch('BVtest',180,true); expect(requests('comments-analyze')).toHaveLength(0);
+  reader.watch('BVtest',181,true); await vi.advanceTimersByTimeAsync(0);
   reader.watch('BVtest',350,true); await vi.advanceTimersByTimeAsync(0);
   expect(requests('comments-analyze')).toHaveLength(1);
+});
+
+test('自定义速读时间按实际观看秒数换算，修改时间后重新检查触发条件', async () => {
+  const settings = migrateSettings(); settings.quickRead = { ...settings.quickRead, auto: true, autoMinutes: 8 };
+  const reader = startCommentReading(settings,controller.signal);
+  reader.watch('BVtest',480,true); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(0);
+  reader.configure({ ...settings, quickRead: { ...settings.quickRead, autoMinutes: 3 } }); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(1);
+});
+
+test('总结背景勾选通过受限消息保存，失败保留原选择，分析携带当前分P', async () => {
+  const original = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(message => message.type === 'comments-context' ? Promise.resolve(message.enabled) : original(message));
+  const reader = startCommentReading(migrateSettings(),controller.signal);
+  reader.watch('BVtest',0,true); await vi.advanceTimersByTimeAsync(0);
+  const actions = mocks.card.mock.calls[0]![0]; actions.context(true); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-context')[0]![0]).toEqual({ type: 'comments-context', enabled: true });
+  expect(state().useVideoSummary).toBe(true);
+  mocks.send.mockImplementation(message => message.type === 'comments-context' ? Promise.reject(new Error('保存失败')) : original(message));
+  actions.context(false); await vi.advanceTimersByTimeAsync(0);
+  expect(state()).toMatchObject({ useVideoSummary: true, contextSaving: false, error: '保存失败' });
+  location.search = '?p=2'; actions.analyze(); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')[0]![0].page).toBe(2);
 });
 test('计时已经达标时等待采集完成再自动分析，重复游标有新增仍继续翻页', async () => {
   const settings = migrateSettings(); settings.quickRead.auto = true;
@@ -175,6 +199,49 @@ test('计时已经达标时等待采集完成再自动分析，重复游标有�
   await vi.advanceTimersByTimeAsync(2100);
   expect(requests('comments-page')).toHaveLength(3); expect(requests('comments-analyze')).toHaveLength(1);
 });
+test.each(['总数变化','精选评论','回复数量变化'])('分页结束后%s仍在观看时长达标时自动速读，并保留部分覆盖标记', async mode => {
+  const settings = migrateSettings(); settings.quickRead.auto = true;
+  const original = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(message => message.type !== 'comments-page' ? original(message) : Promise.resolve(message.root
+    ? { comments: [{ ...root, id: `${message.root}-reply`, root: message.root, parent: message.root }], expected: 2, end: true }
+    : { comments: mode === '回复数量变化' ? [{ ...root, replies: 2 },{ ...root, id: '2', replies: 2 }] : [root], expected: 2, selected: mode === '精选评论', end: true }));
+  const reader = startCommentReading(settings,controller.signal);
+  reader.watch('BVtest',0,true); await vi.advanceTimersByTimeAsync(0);
+  expect(state()).toMatchObject({ complete: false, collecting: false, error: '' });
+  expect(requests('comments-analyze')).toHaveLength(0);
+  if (mode === '回复数量变化') expect(requests('comments-page').map(([message]) => message.root)).toEqual([undefined,'1','2']);
+  reader.watch('BVtest',settings.quickRead.autoMinutes * 60+1,true); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(1);
+  expect(requests('comments-analyze')[0]![0]).toMatchObject({ complete: false, total: mode === '回复数量变化' ? 4 : 1, expected: 2 });
+  reader.watch('BVtest',400,true); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(1);
+});
+
+test('观看时长已达标时，数量不一致的采集结束立即自动速读', async () => {
+  const settings = migrateSettings(); settings.quickRead.auto = true;
+  const original = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(message => message.type === 'comments-page'
+    ? Promise.resolve({ comments: [root], expected: 2, end: true }) : original(message));
+  const reader = startCommentReading(settings,controller.signal);
+  reader.watch('BVtest',settings.quickRead.autoMinutes * 60+1,true); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(1);
+  expect(state().result).toMatchObject({ complete: false, total: 1 });
+});
+
+test('自动速读不会把网络中断或切换视频后的采集当作就绪', async () => {
+  const settings = migrateSettings(); settings.quickRead.auto = true;
+  const original = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(message => message.type === 'comments-page' && message.offset
+    ? Promise.reject(new Error('网络中断')) : message.type === 'comments-page'
+      ? Promise.resolve({ comments: [root], expected: 2, end: false, offset: 'next' }) : original(message));
+  const reader = startCommentReading(settings,controller.signal);
+  reader.watch('BVtest',400,true); await vi.advanceTimersByTimeAsync(0);
+  expect(state()).toMatchObject({ complete: false, error: '网络中断' });
+  expect(requests('comments-analyze')).toHaveLength(0);
+  reader.watch('BVnext',400,false); await vi.advanceTimersByTimeAsync(0);
+  expect(requests('comments-analyze')).toHaveLength(0);
+});
+
 test('切换视频期间旧来源响应不能污染新视频，取消后不自动续采', async () => {
   let resolveOld!: (value: unknown) => void;
   const original = mocks.send.getMockImplementation()!;
@@ -343,7 +410,7 @@ test('检查更新保留已有计数，已知主评论页仍能推进，按编�
   const totals: number[] = []; mocks.render.mockImplementation(value => totals.push(value.total));
   refresh = true; const actions = mocks.card.mock.calls[0]![0]; actions.collect(); await vi.advanceTimersByTimeAsync(0);
   expect(Math.min(...totals)).toBe(3);
-  expect(state()).toMatchObject({ total: 4, complete: true }); expect(state().status).toContain('新增1条');
+  expect(state()).toMatchObject({ total: 4, complete: true });
   expect(requests('comments-source')).toHaveLength(1);
   actions.copy(true); expect(mocks.copy.mock.calls.at(-1)![0]).toContain('更新后的正文');
 });
@@ -367,16 +434,20 @@ test('中断更新保留旧记录，只有完整核对后移除已失效评论',
   let phase = 0;
   mocks.send.mockImplementation(message => {
     if (message.type !== 'comments-page') return original(message);
-    if (!phase) return Promise.resolve({ comments: [root,{ ...root, id: '2' }], expected: 2, end: true });
+    if (!phase) return Promise.resolve({ comments: [root,{ ...root, id: '2', text: '待核对的旧评论' }], expected: 2, end: true });
     if (message.offset) return Promise.reject(new Error('网络中断'));
     return Promise.resolve({ comments: [root], expected: 1, end: phase === 2, offset: 'next' });
   });
   const reader = startCommentReading(migrateSettings(),controller.signal);
   reader.watch('BVtest',0,true); await vi.advanceTimersByTimeAsync(0);
-  const actions = mocks.card.mock.calls[0]![0]; phase = 1; actions.collect(); await vi.advanceTimersByTimeAsync(0);
+  const actions = mocks.card.mock.calls[0]![0];
+  actions.copy(true); expect(mocks.copy.mock.calls.at(-1)![0]).toContain('待核对的旧评论');
+  phase = 1; actions.collect(); await vi.advanceTimersByTimeAsync(0);
   expect(state()).toMatchObject({ complete: false, total: 2, error: '网络中断' });
+  actions.copy(true); expect(mocks.copy.mock.calls.at(-1)![0]).toContain('待核对的旧评论');
   phase = 2; actions.collect(); await vi.advanceTimersByTimeAsync(0);
-  expect(state()).toMatchObject({ complete: true, total: 1 }); expect(state().status).toContain('移除1条失效记录');
+  expect(state()).toMatchObject({ complete: true, total: 1 });
+  actions.copy(true); expect(mocks.copy.mock.calls.at(-1)![0]).not.toContain('待核对的旧评论');
 });
 
 test('检查旧楼层的新回复时保留原回复并合并新增', async () => {
@@ -390,7 +461,7 @@ test('检查旧楼层的新回复时保留原回复并合并新增', async () =>
   reader.watch('BVtest',0,true); await vi.advanceTimersByTimeAsync(0);
   expect(state()).toMatchObject({ total: 2, complete: true });
   refresh = true; const actions = mocks.card.mock.calls[0]![0]; actions.collect(); await vi.advanceTimersByTimeAsync(0);
-  expect(state()).toMatchObject({ total: 3, complete: true }); expect(state().status).toContain('新增1条');
+  expect(state()).toMatchObject({ total: 3, complete: true });
   expect(requests('comments-page').filter(([message]) => message.root)).toHaveLength(1);
   actions.copy(true); const text = mocks.copy.mock.calls.at(-1)![0];
   expect(text.match(/原回复/g)).toHaveLength(1); expect(text).toContain('新增回复');

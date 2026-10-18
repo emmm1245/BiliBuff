@@ -64,6 +64,7 @@ export function RuleEditor({ draft, setDraft, inputs, setInputs, undo, setUndo }
     </Card>
     <Card className={styles.card}><h2>广告与遮罩</h2>
       <label className={styles.switch}><input type="checkbox" checked={draft.blockAds} onChange={event => setDraft({ ...draft, blockAds: event.target.checked })} />遮住首页和视频页的广告推广</label>
+      <label className={styles.switch}><input type="checkbox" checked={draft.blockSpecialCards} onChange={event => setDraft({ ...draft, blockSpecialCards: event.target.checked })} />遮住首页特殊业务卡片（直播、番剧、综艺、影视等）</label>
       <label className={styles.switch}><input type="checkbox" checked={draft.showMaskReasons} onChange={event => setDraft({ ...draft, showMaskReasons: event.target.checked })} />显示遮罩原因</label>
     </Card>
   </>;

@@ -1,6 +1,14 @@
-// 按平方根候选范围、标题标签相似度和秒级聚集降权选取屏蔽样本。
+// 准备互斥的计划分析素材，并按内容相似度和秒级聚集降权选取屏蔽样本。
 import { normalize } from './core';
 import type { VideoEvent } from './types';
+
+export function analysisPool(records: VideoEvent[]) {
+  const blocked = records.filter(record => record.kind === 'blocked');
+  const blockedIds = new Set(blocked.map(record => record.bvid));
+  const watched = records.filter(record => record.kind === 'watched' && !blockedIds.has(record.bvid))
+    .sort((left, right) => right.at - left.at);
+  return { watched, blocked };
+}
 
 export function blockedCandidateLimit(count: number) {
   return Math.ceil(count + 40 * Math.sqrt(count));

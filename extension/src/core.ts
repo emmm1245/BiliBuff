@@ -13,18 +13,19 @@ export function migrateSettings(old: { topics?: string; blocked?: string; tags?:
   return {
     positive: { text: parseWords(old.topics || ''), tags: [], textTags: old.tags ?? true },
     negative: { text: parseWords(old.blocked || ''), tags: [], textTags: old.tags ?? true },
-    strict: false, positiveWins: true, exactTags: false, blockAds: true, hideCarousel: false, showMaskReasons: false,
-    homeSearch: false, homeWallpaper: '', minWatched: 10, minBlocked: 100,
+    strict: false, positiveWins: true, exactTags: false, blockAds: true, blockSpecialCards: false, hideCarousel: false, showMaskReasons: false,
+    homeSearch: false, homeWallpaper: '', minWatched: 10, minBlocked: 100, autoSamples: false, analysisMode: 'general',
     ai: { model: 'deepseek-flash', thinking: false, effort: 'high', maxTokens: 65536 },
     providers: [{ ...DEEPSEEK }],
+    browse: { enabled: false, providerId: 'deepseek', model: 'deepseek-v4-pro', thinking: true, effort: 'high', maxTokens: 8192 },
     review: { enabled: false, mode: 'general', workspaceId: '' },
-    quickRead: { auto: false, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' }, videoAssistant: defaultVideoOptions(), planMaxLength: 100,
+    quickRead: { auto: false, autoMinutes: 3, useVideoSummary: false, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' }, videoAssistant: defaultVideoOptions(), planMaxLength: 100,
   };
 }
 export function currentSettings(saved: Partial<Settings> = {}): Settings {
   const defaults = migrateSettings();
   const video = saved.videoAssistant;
-  return { ...defaults, ...saved, ai: { ...defaults.ai, ...saved.ai }, review: { ...defaults.review, ...saved.review }, quickRead: { ...defaults.quickRead, ...saved.quickRead },
+  return { ...defaults, ...saved, ai: { ...defaults.ai, ...saved.ai }, browse: { ...defaults.browse, ...saved.browse }, review: { ...defaults.review, ...saved.review }, quickRead: { ...defaults.quickRead, ...saved.quickRead },
     videoAssistant: { ...defaults.videoAssistant, ...video,
       chapterRanges: { concise: { ...defaults.videoAssistant.chapterRanges.concise, ...video?.chapterRanges?.concise },
         balanced: { ...defaults.videoAssistant.chapterRanges.balanced, ...video?.chapterRanges?.balanced }, detailed: { ...defaults.videoAssistant.chapterRanges.detailed, ...video?.chapterRanges?.detailed } }, summary: { ...defaults.videoAssistant.summary, ...video?.summary }, chapters: { ...defaults.videoAssistant.chapters, ...video?.chapters }, chat: { ...defaults.videoAssistant.chat, ...video?.chat } } };
@@ -121,8 +122,9 @@ export function validateSettings(value: unknown): Settings {
     }
     settings[side] = { text: settings[side].text, tags: settings[side].tags, textTags: group.textTags };
   }
-  for (const field of ['strict', 'positiveWins', 'exactTags', 'blockAds', 'hideCarousel', 'showMaskReasons', 'homeSearch'] as const) if (typeof settings[field] !== 'boolean') throw new Error('规则开关无效。');
+  for (const field of ['strict', 'positiveWins', 'exactTags', 'blockAds', 'blockSpecialCards', 'hideCarousel', 'showMaskReasons', 'homeSearch', 'autoSamples'] as const) if (typeof settings[field] !== 'boolean') throw new Error('规则开关无效。');
   settings.homeWallpaper = validateWallpaper(settings.homeWallpaper);
+  if (settings.analysisMode !== 'general' && settings.analysisMode !== 'strict') throw new Error('请选择有效的计划分析模式。');
   for (const field of ['minWatched', 'minBlocked'] as const) {
     const limit = field === 'minBlocked' ? 1000 : 100;
     if (!Number.isInteger(settings[field]) || settings[field] < 1 || settings[field] > limit) throw new Error(`${field === 'minBlocked' ? '屏蔽' : '观看'}样本数量必须为 1–${limit} 的整数。`);
@@ -130,6 +132,10 @@ export function validateSettings(value: unknown): Settings {
   if (settings.strict && !settings.positive.text.length && !settings.positive.tags.length) throw new Error('严格模式需要至少一个偏好词条。');
   settings.ai = validateAIOptions(settings.ai);
   settings.providers = validateProviders(settings.providers);
+  const browse = object(settings.browse);
+  if (typeof browse.enabled !== 'boolean') throw new Error('AI帮你刷开关无效。');
+  settings.browse = { ...validateAIOptions(browse), enabled: browse.enabled };
+  if (!settings.providers.some(provider => provider.id === settings.browse.providerId)) throw new Error('请重新选择 AI帮你刷使用的服务。');
   const video = object(settings.videoAssistant);
   for (const flag of ['autoSummary','autoChapters','autoSkipAds'] as const) if (typeof video[flag] !== 'boolean') throw new Error('视频助手自动功能开关无效。');
   if (!['concise','balanced','detailed'].includes(video.chapterDensity as string)) throw new Error('请选择有效的章节密度。');
@@ -144,13 +150,14 @@ export function validateSettings(value: unknown): Settings {
   settings.videoAssistant = { chapterRanges: ranges.data, chapterDensity: video.chapterDensity as Settings['videoAssistant']['chapterDensity'], autoSummary: video.autoSummary as boolean, autoChapters: video.autoChapters as boolean, autoSkipAds: video.autoSkipAds as boolean,
     summary: selections.summary!, chapters: selections.chapters!, chat: selections.chat! };
   const quick = object(settings.quickRead);
-  if (typeof quick.auto !== 'boolean' || !Number.isInteger(quick.limit) || Number(quick.limit) < 1 || Number(quick.limit) > 10000 ||
+  if (typeof quick.auto !== 'boolean' || typeof quick.useVideoSummary !== 'boolean' || !Number.isInteger(quick.autoMinutes) || Number(quick.autoMinutes) < 1 ||
+      !Number.isInteger(quick.limit) || Number(quick.limit) < 1 || Number(quick.limit) > 10000 ||
       !Number.isInteger(quick.valuableCount) || Number(quick.valuableCount) < 1 || Number(quick.valuableCount) > 50 ||
       typeof quick.providerId !== 'string' || !settings.providers.some(provider => provider.id === quick.providerId) ||
       typeof quick.model !== 'string' || /\s/.test(quick.model) || (quick.providerId === 'deepseek' && !DEEPSEEK_MODELS.includes(quick.model))) {
-    throw new Error('请检查评论速读设置：分析上限为1–10000条，推荐数量为1–50条，并选择有效服务与模型。');
+    throw new Error('请检查评论速读设置：自动速读时间为正整数分钟，分析上限为1–10000条，推荐数量为1–50条，并选择有效服务与模型。');
   }
-  settings.quickRead = { auto: quick.auto, limit: Number(quick.limit), valuableCount: Number(quick.valuableCount), providerId: quick.providerId, model: quick.model };
+  settings.quickRead = { auto: quick.auto, autoMinutes: Number(quick.autoMinutes), useVideoSummary: quick.useVideoSummary, limit: Number(quick.limit), valuableCount: Number(quick.valuableCount), providerId: quick.providerId, model: quick.model };
   if (!settings.providers.some(provider => provider.id === (settings.ai.providerId ?? 'deepseek'))) throw new Error('请重新选择手动分析使用的 AI 服务。');
   const review = object(settings.review);
   if (typeof review.enabled !== 'boolean' || !['general', 'decision'].includes(String(review.mode)) ||
@@ -164,9 +171,9 @@ export function validateSettings(value: unknown): Settings {
   if (!Number.isInteger(settings.planMaxLength) || settings.planMaxLength < 1 || settings.planMaxLength > 6000) throw new Error('计划最大字数必须为 1–6000 之间的整数。');
   // 仅返回已知字段，备份和消息不能注入任意配置。
   return { positive: settings.positive, negative: settings.negative, strict: settings.strict, positiveWins: settings.positiveWins,
-    exactTags: settings.exactTags, blockAds: settings.blockAds, hideCarousel: settings.hideCarousel, showMaskReasons: settings.showMaskReasons,
+    exactTags: settings.exactTags, blockAds: settings.blockAds, blockSpecialCards: settings.blockSpecialCards, hideCarousel: settings.hideCarousel, showMaskReasons: settings.showMaskReasons,
     homeSearch: settings.homeSearch, homeWallpaper: settings.homeWallpaper,
-    minWatched: settings.minWatched, minBlocked: settings.minBlocked, ai: settings.ai, providers: settings.providers, review: settings.review, quickRead: settings.quickRead, videoAssistant: settings.videoAssistant, planMaxLength: settings.planMaxLength };
+    minWatched: settings.minWatched, minBlocked: settings.minBlocked, autoSamples: settings.autoSamples, analysisMode: settings.analysisMode, ai: settings.ai, providers: settings.providers, review: settings.review, quickRead: settings.quickRead, videoAssistant: settings.videoAssistant, browse: settings.browse, planMaxLength: settings.planMaxLength };
 }
 export function validateEvent(value: unknown): VideoEvent {
   const parsed = eventSchema.safeParse(value);

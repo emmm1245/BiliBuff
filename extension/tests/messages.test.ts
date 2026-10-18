@@ -15,6 +15,14 @@ test('未知请求字段不传入业务，网页指定的旧视频模型不会�
   const message = parseMessage({ type: 'video-analyze', bvid: 'BVtest', cid: 1, language: 'zh', fingerprint: 'x', task: 'summary', requestId: 'x', selection: { providerId: 'other' } });
   expect(message).not.toHaveProperty('selection');
 });
+test('样本请求兼容手动模式，并校验自动选量范围', () => {
+  expect(parseMessage({ type: 'samples' })).toEqual({ type: 'samples' });
+  expect(parseMessage({ type: 'samples', counts: { watched: 0, blocked: 1000 } })).toEqual({ type: 'samples', counts: { watched: 0, blocked: 1000 } });
+  for (const counts of [{ watched: 101, blocked: 1 }, { watched: 1, blocked: 1001 }, { watched: -1, blocked: 1 }, { watched: 1, blocked: 1.5 }]) {
+    expect(() => parseMessage({ type: 'samples', counts })).toThrow('参数无效');
+  }
+});
+
 test('保存边界保留密钥省略与显式清空的区别，并允许旧设置进入迁移', () => {
   const base = { type: 'save', settings: { old: true }, revision: 0 };
   expect(parseMessage(base)).not.toHaveProperty('apiKey');
@@ -34,4 +42,9 @@ test('视频请求保留三档章节密度并拒绝非法档位，旧请求仍�
 test('密度记忆消息只接受预设档位，不能借机改写其他设置', () => {
   expect(parseMessage({ type: 'video-density', density: 'detailed', settings: { autoChapters: true } })).toEqual({ type: 'video-density', density: 'detailed' });
   expect(() => parseMessage({ type: 'video-density', density: 'invalid' })).toThrow('参数无效');
+});
+
+test('总结背景记忆只接受布尔开关，不能借机改写其他设置', () => {
+  expect(parseMessage({ type: 'comments-context', enabled: true, settings: { auto: true } })).toEqual({ type: 'comments-context', enabled: true });
+  expect(() => parseMessage({ type: 'comments-context', enabled: 'true' })).toThrow('参数无效');
 });

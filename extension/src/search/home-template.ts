@@ -20,6 +20,7 @@ export function homeTemplate(logo: string) {
         <p class="quote">你所热爱的，就是你的生活。</p>
         <p class="error" role="status" hidden></p>
       </div>
+      <div class="browse-mount" hidden></div>
       <button class="settings" type="button" title="调整留白模式与壁纸">${settingsIcon}留白设置</button>
     </main>`;
 }

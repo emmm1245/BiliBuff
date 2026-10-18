@@ -87,12 +87,43 @@ test('官方章节不依赖字幕行或模型密钥，不发起AI生成', async 
   const result = await service(task(cache,'chapters')) as VideoCache;
   expect(result.source.nativeChapters).toHaveLength(1); expect(mocks.model).not.toHaveBeenCalled();
 });
-test('问答保存合法原文引用，非法引用不覆盖已有历史', async () => {
-  const cache = await subtitles(); mocks.output.push({ summary: '核心依据', points: [], refs: [0] });
+test('问答过滤无效引用并保存正文，保留既有历史且不追加请求', async () => {
+  const cache = await subtitles(); mocks.output.push({ summary: '核心依据', refs: [0] });
   await service(task(cache,'chat'));
-  mocks.output.push({ summary: '错误依据', points: [], refs: [99] });
-  await expect(service(task(cache,'chat'))).rejects.toThrow('无效字幕引用');
-  expect((await subtitles()).answers).toHaveLength(1);
+  mocks.output.push({ summary: '补充依据', refs: [99,1,1] });
+  await service(task(cache,'chat'));
+  mocks.output.push({ summary: '没有有效引用的回答', refs: [99] });
+  await service(task(cache,'chat'));
+  expect((await subtitles()).answers).toMatchObject([
+    { answer: '核心依据', refs: [0] },{ answer: '补充依据', refs: [1] },{ answer: '没有有效引用的回答', refs: [] },
+  ]);
+  expect(mocks.model).toHaveBeenCalledTimes(3);
+});
+
+test('问答将区间引用保存为有效起始字幕，正文不残留区间标记', async () => {
+  const cache = await subtitles(); mocks.output.push('核心依据[[0–1]][[1-1]][[0–99]]');
+  const result = await service(task(cache,'chat')) as VideoCache;
+  expect(result.answers).toMatchObject([{ answer: '核心依据', refs: [0,1] }]);
+  expect((await subtitles()).answers).toEqual(result.answers);
+});
+
+test('长视频问答合并丢弃越界及未在原分段引用过的行号，仍保存正文和有效引用', async () => {
+  mocks.rows = Array.from({ length: 120 },(_,i) => ({ start: i, end: i+1, text: '完整保留字幕内容'.repeat(40) }));
+  prefs.settings.videoAssistant.chat = { ...prefs.settings.videoAssistant.chat, contextTokens: 16000, maxTokens: 1024 };
+  const cache = await subtitles();
+  mocks.model.mockImplementation(async (_p,_s,body,_signal,consume) => {
+    mocks.bodies.push(body);
+    const data = JSON.parse(body.messages[1].content);
+    return consume(data.subtitle
+      ? '分段依据[[999999,0]]'
+      : '最终回答[[999999,1,2,3,4,5,6,7,0]]');
+  });
+  const result = await service(task(cache,'chat')) as VideoCache;
+  const inputs = mocks.bodies.map(body => JSON.parse((body.messages as { content: string }[])[1]!.content));
+  expect(inputs.filter(data => data.subtitle).length).toBeGreaterThan(1);
+  expect(inputs.filter(data => data.parts)).toHaveLength(1);
+  expect(result.answers).toMatchObject([{ answer: '最终回答', refs: [0] }]);
+  expect((await subtitles()).answers).toEqual(result.answers);
 });
 test('长视频逐段全部读取并汇总，最后的字幕不会被丢弃', async () => {
   mocks.rows = Array.from({ length: 200 },(_,i) => ({ start: i, end: i+1, text: `第${i}句`.repeat(40) }));

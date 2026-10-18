@@ -1,0 +1,11 @@
+{ "_comment": { "message": "定义扩展的简体中文名称、简介和工具栏提示。" },
+  "extensionName": {
+    "message": "BiliBuff - 哔哩哔哩｜B站效率与体验增强插件"
+  },
+  "extensionDescription": {
+    "message": "上B站学点东西，有个Buff更顺手。推荐筛选、留白首页、观看统计与 AI 计划分析、内容复核、评论速读，提升学习效率与浏览体验。"
+  },
+  "actionTitle": {
+    "message": "打开 BiliBuff 设置"
+  }
+}

@@ -9,6 +9,15 @@ import { aiConnection, providerOrigin } from './ai-providers';
 import { traceAIWork, type AIDebugFeature } from './ai-debug';
 import type { Preferences } from './types';
 
+// DeepSeek 的结构化输出兼容提示是预期行为，其他警告仍写入控制台。
+globalThis.AI_SDK_LOG_WARNINGS = ({ warnings, provider, model }) => {
+  for (const warning of warnings) {
+    if (provider === 'deepseek.chat' && warning.type === 'compatibility' && warning.feature === 'responseFormat JSON schema' &&
+        warning.details === 'JSON response schema is injected into the system message.') continue;
+    console.warn('AI SDK Warning', { provider, model, warning });
+  }
+};
+
 interface OutputOptions { schema?: ZodType; preview?: (text: string) => void; partial?: (value: unknown) => void; thinking?: () => void }
 export async function requestAI<T>(prefs: Preferences, selection: { providerId?: string; model?: string }, body: Record<string, unknown>, signal: AbortSignal,
   consume: (value: unknown) => Promise<T> | T, feature: AIDebugFeature, options: OutputOptions = {}): Promise<T> {

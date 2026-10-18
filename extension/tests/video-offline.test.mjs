@@ -1,7 +1,7 @@
 // 使用现有依赖独立检查视频章节优先级、正文流式输出、字幕引用、自动跳过和独立设置迁移。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeVideoChapters, videoTimeline, videoAnswer, indexedChunks } from '../src/video-data.ts';
+import { nativeVideoChapters, videoTimeline, videoAnswer, videoAnswerText, indexedChunks } from '../src/video-data.ts';
 import { adSkipTarget } from '../src/video-player.ts';
 import { defaultVideoOptions, videoInputBudget, videoParameters } from '../src/video-ai.ts';
 import { currentSettings, migrateSettings, validateSettings, validateBackup } from '../src/core.ts';
@@ -28,11 +28,38 @@ test('广告仅在区间内跳过一次，手动返回不会再次被跳走', ()
   assert.equal(adSkipTarget(chapters,4,skipped),null); assert.equal(adSkipTarget(chapters,7,skipped),15);
   assert.equal(adSkipTarget(chapters,6,skipped),null); assert.equal(adSkipTarget(chapters,15,new Set()),null);
 });
-test('问答正文直接保存，引用可定位且非法行号拒绝保存', () => {
+test('问答保留正文，引用去重并过滤无效行号，最多展示六条', () => {
   assert.deepEqual(videoAnswer('核心依据[[2]]，以及补充[[3]][[2]]',0,4),{ answer: '核心依据，以及补充', refs: [2,3] });
-  assert.throws(() => videoAnswer('错误[[8]]',0,4),/无效字幕引用/);
+  assert.deepEqual(videoAnswer('正文[[8]][[2]]',0,4),{ answer: '正文', refs: [2] });
+  assert.deepEqual(videoAnswer('正文[[99]]',0,4),{ answer: '正文', refs: [] });
+  const manyRefs = '正文'+[99,0,1,2,3,4,5,6,7,7].map(id => `[[${id}]]`).join('');
+  assert.deepEqual(videoAnswer(manyRefs,0,7),{ answer: '正文', refs: [0,1,2,3,4,5] });
+  assert.deepEqual(videoAnswer(manyRefs,0,7,new Set([7])),{ answer: '正文', refs: [7] });
   assert.throws(() => videoAnswer('[[1]]',0,4),/有效正文/);
 });
+test('批量引用与单行引用统一解析，保留正文、有效行号及普通 Markdown', () => {
+  const text = '源码细节[[3,4,5,6,7]]。补充[[ 40, 41, 999 ]][[3]]。';
+  assert.deepEqual(videoAnswer(text,0,50),{ answer: '源码细节。补充。', refs: [3,4,5,6,7,40] });
+  assert.deepEqual(videoAnswer(text,0,50,new Set([41])),{ answer: '源码细节。补充。', refs: [41] });
+  assert.equal(videoAnswerText(text),'源码细节。补充。');
+  assert.equal(videoAnswerText('**重点** [文档](https://example.com) [1,2]'),'**重点** [文档](https://example.com) [1,2]');
+  for (const partial of ['[','[[','[[3','[[3,','[[3, 4','[[3,4]','[[3,4]]']) {
+    assert.equal(videoAnswerText('回答'+partial,true),'回答');
+  }
+  assert.throws(() => videoAnswer('[[3,4]]',0,50),/有效正文/);
+});
+
+test('问答区间引用定位到起始字幕，兼容不同横线并过滤越界和倒序', () => {
+  const text = '两项技术[[30–33]][[52-61]][[65—67]]。其他说明[[94–98]][[110–112]][[159–160]]。';
+  assert.deepEqual(videoAnswer(text,0,220),{ answer: '两项技术。其他说明。', refs: [30,52,65,94,110,159] });
+  assert.deepEqual(videoAnswer('混合[[2, 4–6, 8-9]][[4–6]][[99–101]][[7–3]]',0,100),{ answer: '混合', refs: [2,4,8] });
+  assert.deepEqual(videoAnswer('分段[[2–4]][[5–7]]',3,8),{ answer: '分段', refs: [5] });
+  assert.deepEqual(videoAnswer(text,0,220,new Set([52,159])),{ answer: '两项技术。其他说明。', refs: [52,159] });
+  for (const suffix of ['[[30–','[[30–33','[[30–33]','[[30–33]]','[[30-33, 52—']) {
+    assert.equal(videoAnswerText('说明'+suffix,true),'说明');
+  }
+});
+
 test('总结问答不发送结构化输出约束，章节保留约束', () => {
   const selection = defaultVideoOptions().summary;
   assert.equal(videoParameters(selection,false).response_format,undefined);

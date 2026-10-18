@@ -5,6 +5,7 @@ const icons = {
   tv: TvMinimal,
   rules: ListChecks,
   home: House,
+  browse: Sparkles,
   quickRead: MessageSquareText,
   videoAssistant: Video,
   analysis: Sparkles,

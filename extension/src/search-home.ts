@@ -1,8 +1,9 @@
-// 挂载可恢复的留白首页，呈现深浅壁纸、原站搜索历史和搜索联想。
+// 挂载可恢复的留白首页，保留早启动搜索并按需加载AI推荐。
 import { homeTemplate } from './search/home-template';
 import logo from './assets/bilibili-text.svg?raw';
 import css from './search-home.css?inline';
 import themeCss from './home-theme.css?inline';
+import browseCss from './browse-home.css?inline';
 import type { Settings } from './types';
 import type { Theme } from './theme';
 import { attachSearchPanel } from './search-panel';
@@ -11,7 +12,7 @@ export function createSearchHome(openSettings: () => Promise<unknown>, suggest: 
   const host = document.createElement('div');
   host.id = 'bf-search-home';
   const root = host.attachShadow({ mode: 'open' });
-  root.innerHTML = `<style>${css}\n${themeCss}</style>${homeTemplate(logo)}`;
+  root.innerHTML = `<style>${css}\n${themeCss}\n${browseCss}</style>${homeTemplate(logo)}`;
   const home = root.querySelector<HTMLElement>('.home')!;
   const wallpaper = root.querySelector<HTMLElement>('.wallpaper')!;
   const search = attachSearchPanel(root, suggest);
@@ -24,8 +25,21 @@ export function createSearchHome(openSettings: () => Promise<unknown>, suggest: 
     html.bf-search-home > body { display: none !important; }
     html.bf-search-home > #bf-search-home { display: block !important; }`;
   let wallpaperValue = '';
-  function remove() { search.unmount(); document.documentElement.classList.remove('bf-search-home'); host.remove(); hide.remove(); }
-  function update(settings: Pick<Settings, 'homeSearch' | 'homeWallpaper'>, pathname = location.pathname) {
+  const browseMount = root.querySelector<HTMLElement>('.browse-mount')!;
+  let removeBrowse: (() => void) | undefined;
+  let browseEnabled = false, browseEpoch = 0;
+  function updateBrowse(enabled: boolean) {
+    if (browseEnabled === enabled) return;
+    browseEnabled = enabled;
+    const epoch = ++browseEpoch;
+    browseMount.hidden = !enabled; home.classList.toggle('has-browse',enabled);
+    removeBrowse?.(); removeBrowse = undefined;
+    if (enabled) void import('./browse-home').then(({ mountBrowseHome }) => {
+      if (browseEnabled && epoch === browseEpoch) removeBrowse = mountBrowseHome(browseMount);
+    }).catch(() => { if (epoch === browseEpoch) browseMount.textContent = '推荐暂时无法加载，请刷新页面。'; });
+  }
+  function remove() { updateBrowse(false); search.unmount(); document.documentElement.classList.remove('bf-search-home'); host.remove(); hide.remove(); }
+  function update(settings: Pick<Settings, 'homeSearch' | 'homeWallpaper' | 'browse'>, pathname = location.pathname) {
     if (!settings.homeSearch || pathname !== '/') { remove(); return; }
     if (settings.homeWallpaper !== wallpaperValue) {
       wallpaperValue = settings.homeWallpaper;
@@ -37,6 +51,7 @@ export function createSearchHome(openSettings: () => Promise<unknown>, suggest: 
       document.documentElement.classList.add('bf-search-home');
       search.mount();
     }
+    updateBrowse(settings.browse.enabled);
   }
   function setTheme(theme: Theme) { host.dataset.theme = theme; }
   return { update, remove, setTheme };

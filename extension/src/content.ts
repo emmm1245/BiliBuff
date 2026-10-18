@@ -14,7 +14,7 @@ export function startContent(initialSettings: ContentSettings) {
   }
   const requestTags = (bvid: string) => send({ type: 'tags', bvid });
   function recordEvent(kind: EventKind, video: Pick<VideoEvent,'bvid' | 'title'>, tags: string[] | null = null, reason = '') {
-    void send({ type: 'record', event: { kind, ...video, tags, reason, at: Date.now() } }).catch(showError);
+    void send({ type: 'record', event: { kind, bvid: video.bvid, title: video.title, tags, reason, at: Date.now() } }).catch(showError);
   }
   trackWatching(signal, comments.watch, recordEvent, requestTags);
   const stop = startCards(initialSettings,signal,{ requestTags, recordEvent, showError,

@@ -1,12 +1,12 @@
 /* 设置页的侧栏、卡片、主题切换和自适应布局。 */
 .layout { min-height: 100vh; }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 2; width: 232px; padding: 36px 20px 24px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; overflow-y: auto; }
-.brand { display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 21px; font-weight: 600; line-height: 1.4; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 2; width: 232px; padding: 36px 20px 24px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+.brand { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 0 10px; font-size: 21px; font-weight: 600; line-height: 1.4; }
 .brand > div > span { display: block; color: var(--subtle); font-size: 12px; font-weight: 400; margin-top: 4px; letter-spacing: 2px; }
 .brandIcon { color: var(--pink); display: grid; place-items: center; }
 .brandIcon svg { width: 38px; height: 38px; }
 .navLabel { margin: 0 14px 6px; font-size: 12px; color: var(--muted); }
-.nav { display: grid; gap: 24px; margin-top: 36px; }
+.nav { display: grid; flex: 1; min-height: 0; align-content: start; gap: 24px; margin-top: 36px; overflow-y: auto; overscroll-behavior-y: contain; }
 .navGroup { display: grid; gap: 6px; }
 .nav button { display: flex; align-items: center; gap: 14px; padding: 13px 16px; text-align: left; background: transparent; border-color: transparent; border-radius: 8px; color: var(--muted); }
 .nav button:hover:not(:disabled) { border-color: transparent; }
@@ -22,7 +22,7 @@
 .navLink:hover .navGrip { color: var(--accent); }
 .navDragging { opacity: .45; outline: 1px dashed var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .navGrip { transition: none; } }
-.sidebarBottom { margin-top: auto; padding: 32px 4px 0; }
+.sidebarBottom { flex-shrink: 0; margin-top: auto; padding: 32px 4px 0; }
 .sidebarBottom p { margin: 24px 0 3px; font-size: 12px; }
 .sidebarBottom > small { color: var(--subtle); font-size: 11px; }
 .themePicker > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
@@ -68,6 +68,16 @@
 .negative .chip:hover { border-color: var(--pink); }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .row small { flex: 1; }
+.analysisHeading { margin-bottom: 12px; }
+.analysisModes { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--field); }
+.analysisModes label { position: relative; cursor: pointer; }
+.analysisModes input[type=radio] { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.analysisModes span { display: block; padding: 6px 14px; border-radius: 5px; font-size: 13px; line-height: 20px; color: var(--muted); white-space: nowrap; }
+.analysisModes input:checked + span { color: var(--accent); background: var(--blue-soft); font-weight: 600; }
+.analysisModes input:not(:disabled):not(:checked) + span:hover { color: var(--text); background: var(--surface); }
+.analysisModes input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.analysisModes input:disabled + span { opacity: .45; cursor: default; }
+p.analysisModeHint { margin: 0 0 14px; }
 .undoAction { margin-bottom: 20px; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .stats .card { padding: 20px 24px; }
@@ -148,10 +158,10 @@ p.notice { margin: 14px 0 20px; }
 @media (min-width: 1512px) { .footer { margin-left: max(288px, calc((100vw - 1512px) / 2 + 288px)); } }
 @media (max-width: 1100px) { .main { padding-right: 28px; padding-left: 260px; } .card { padding: 22px; } .footer { margin-left: 260px; margin-right: 28px; } }
 @media (max-width: 950px) {
-  .sidebar { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 20px 24px; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 20px; }
+  .sidebar { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 20px 24px; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 20px; overflow: visible; }
   .brand { font-size: 18px; padding: 0; } .brandIcon svg { width: 32px; height: 32px; }
   .navLabel, .sidebarBottom > p, .sidebarBottom > small, .themePicker > span { display: none; }
-  .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; order: 3; width: 100%; margin-top: 0; } .nav button { padding: 10px 12px; gap: 8px; }
+  .nav { display: grid; flex: initial; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; order: 3; width: 100%; margin-top: 0; overflow: visible; } .nav button { padding: 10px 12px; gap: 8px; }
   .navGroup { display: contents; }
   .navHint { grid-column: 1 / -1; }
   .sidebarBottom { margin: 0 0 0 auto; padding: 0; }

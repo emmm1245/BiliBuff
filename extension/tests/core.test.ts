@@ -17,6 +17,37 @@ test('留白默认关闭，旧配置与备份兼容，自选壁纸可以保存�
   }
 });
 
+test('特殊业务卡片遮罩默认关闭，旧设置兼容，保存和备份保留开关', () => {
+  const { blockSpecialCards, ...oldSettings } = migrateSettings();
+  expect(blockSpecialCards).toBe(false);
+  expect(currentSettings(oldSettings).blockSpecialCards).toBe(false);
+  expect(validateSettings(oldSettings).blockSpecialCards).toBe(false);
+  const settings = validateSettings({ ...oldSettings, blockSpecialCards: true });
+  expect(settings.blockSpecialCards).toBe(true);
+  expect(validateBackup({ format: 'bilibili-focus-backup', version: 1, settings, plan: '', events: [], result: null }).settings.blockSpecialCards).toBe(true);
+  expect(() => validateSettings({ ...oldSettings, blockSpecialCards: 'true' })).toThrow('规则开关');
+});
+
+test('计划分析默认通用模式，旧配置兼容，严格分析可保存备份且不改变过滤开关', () => {
+  const { analysisMode, ...old } = migrateSettings();
+  expect(analysisMode).toBe('general');
+  expect(validateSettings(old).analysisMode).toBe('general');
+  const settings = validateSettings({ ...old, analysisMode: 'strict' });
+  const restored = validateBackup({ format: 'bilibili-focus-backup', version: 1, settings, plan: '', events: [], result: null });
+  expect(restored.settings).toMatchObject({ analysisMode: 'strict', strict: false });
+  expect(() => validateSettings({ ...old, analysisMode: 'unknown' })).toThrow('计划分析模式');
+});
+
+test('自动选量默认关闭，旧设置兼容，保存和备份保留开关及手动数量', () => {
+  const { autoSamples, ...old } = migrateSettings();
+  expect(autoSamples).toBe(false);
+  expect(validateSettings(old).autoSamples).toBe(false);
+  const settings = validateSettings({ ...old, autoSamples: true, minWatched: 9, minBlocked: 120 });
+  const restored = validateBackup({ format: 'bilibili-focus-backup', version: 1, settings, plan: '', events: [], result: null });
+  expect(restored.settings).toMatchObject({ autoSamples: true, minWatched: 9, minBlocked: 120 });
+  expect(() => validateSettings({ ...old, autoSamples: 'true' })).toThrow();
+});
+
 test('屏蔽样本支持1至1000且备份保留设置，观看门槛保持1至100', () => {
   const settings = validateSettings({ ...migrateSettings(), minBlocked: 1000 });
   expect(validateBackup({ format: 'bilibili-focus-backup', version: 1, settings, plan: '', events: [], result: null }).settings.minBlocked).toBe(1000);

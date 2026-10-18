@@ -1,9 +1,9 @@
-// 定义设置页七个面板的名称及导航类型。
-export const tabTitles = { rules: '内容过滤', home: '首页外观', quickRead: '评论速读', videoAssistant: '视频助手', analysis: 'AI 计划分析', services: 'AI 服务', data: '数据与维护' };
+// 定义设置面板、功能分组及可恢复的导航顺序。
+export const tabTitles = { rules: '内容过滤', home: '首页外观', browse: 'AI帮你刷', quickRead: 'AI 评论速读', videoAssistant: 'AI 视频助手', analysis: 'AI 计划分析', services: 'AI 服务', data: '数据与维护' };
 export type Tab = keyof typeof tabTitles;
 
 export const navigationGroups: { label: string; tabs: Tab[] }[] = [
-  { label: '日常功能', tabs: ['rules', 'home', 'quickRead', 'videoAssistant', 'analysis'] },
+  { label: '日常功能', tabs: ['rules', 'home', 'browse', 'quickRead', 'videoAssistant', 'analysis'] },
   { label: '配置与维护', tabs: ['services', 'data'] },
 ];
 export const NAVIGATION_ORDER_KEY = 'bilibuff-settings-navigation-order';

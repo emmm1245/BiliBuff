@@ -1,0 +1,10 @@
+<!-- BiliBuff 正式图标母版：蓝色小电视与粉色增益火花。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <path d="M39 22L53 42" fill="none" stroke="#00AEEC" stroke-width="10" stroke-linecap="round"/>
+  <path d="M87 22L73 42" fill="none" stroke="#00AEEC" stroke-width="10" stroke-linecap="round"/>
+  <rect x="14" y="38" width="98" height="72" rx="22" fill="#00AEEC"/>
+  <rect x="25" y="49" width="76" height="51" rx="13" fill="#FFFFFF"/>
+  <rect x="43" y="63" width="9" height="22" rx="4.5" fill="#008AC5"/>
+  <rect x="73" y="63" width="9" height="22" rx="4.5" fill="#008AC5"/>
+  <path d="M103 29C105 29 105 35 108 38C111 41 117 41 117 44C117 47 111 47 108 50C105 53 105 59 103 59C100 59 100 53 97 50C94 47 88 47 88 44C88 41 94 41 97 38C100 35 100 29 103 29Z" fill="#D94B7D" stroke="white" stroke-width="4" stroke-linejoin="round"/>
+</svg>

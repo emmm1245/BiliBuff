@@ -9,6 +9,7 @@ import logo from '../assets/bilibili-text.svg';
 import styles from './App.module.css';
 
 export function SearchHomeSettings({ draft, setDraft }: { draft: Settings; setDraft: Dispatch<SetStateAction<Settings | null>> }) {
+  const homeEnabled = draft.homeSearch || draft.browse.enabled;
   const [error, setError] = useState('');
   const [reading, setReading] = useState(false);
   async function upload(file: File) {
@@ -33,7 +34,8 @@ export function SearchHomeSettings({ draft, setDraft }: { draft: Settings; setDr
   }
   return <>
     <Card className={styles.card}><h2>留白模式</h2>
-      <label className={styles.switch}><input type="checkbox" checked={draft.homeSearch} onChange={event => setDraft({ ...draft, homeSearch: event.target.checked })} />首页仅提供搜索功能</label>
+      <label className={styles.switch}><input type="checkbox" checked={homeEnabled} disabled={draft.browse.enabled} onChange={event => setDraft({ ...draft, homeSearch: event.target.checked })} />使用留白首页</label>
+      {draft.browse.enabled && <p className={styles.notice}>AI帮你刷开启期间固定使用留白首页。</p>}
     </Card>
     <Card className={styles.card}><h2>首页壁纸</h2>
     <div className={styles.homePreview} role="img" aria-label="留白首页预览：粉色哔哩哔哩标志、搜索框和你所热爱的，就是你的生活。">
@@ -51,8 +53,8 @@ export function SearchHomeSettings({ draft, setDraft }: { draft: Settings; setDr
     {error && <p className={styles.banner} role="alert">{error}</p>}
     </Card>
     <Card className={styles.card}><h2>原版首页</h2>
-      <label className={styles.switch}><input type="checkbox" checked={draft.hideCarousel} disabled={draft.homeSearch} onChange={event => setDraft({ ...draft, hideCarousel: event.target.checked })} />隐藏首页推荐轮播</label>
-      {draft.homeSearch && <p className={styles.notice}>关闭留白模式后可调整。</p>}
+      <label className={styles.switch}><input type="checkbox" checked={draft.hideCarousel} disabled={homeEnabled} onChange={event => setDraft({ ...draft, hideCarousel: event.target.checked })} />隐藏首页推荐轮播</label>
+      {homeEnabled && <p className={styles.notice}>关闭留白模式后可调整。</p>}
     </Card>
   </>;
 }

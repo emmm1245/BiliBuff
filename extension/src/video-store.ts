@@ -7,6 +7,12 @@ const KEY = 'video-workbench-cache';
 let writes: Promise<unknown> = Promise.resolve();
 async function entries() { return (await browser.storage.local.get(KEY))[KEY] as Record<string,VideoCache> | undefined || {}; }
 export async function readVideoCache(bvid: string, cid: number, language: string) { await writes; return (await entries())[videoKey(bvid,cid,language)] ?? null; }
+export async function readVideoSummary(bvid: string, page: number) {
+  await writes;
+  const cached = Object.values(await entries()).filter(cache => cache.source.bvid === bvid && cache.source.page === page &&
+    cache.summary?.fingerprint === cache.fingerprint && cache.summary?.value.summary.trim()).sort((a,b) => b.summary!.at-a.summary!.at)[0];
+  return cached?.summary?.value;
+}
 export function updateVideoCache(bvid: string, cid: number, language: string, update: (previous: VideoCache | null) => VideoCache | null) {
   const task = writes.then(async () => {
     const saved = await entries(), key = videoKey(bvid,cid,language), next = update(saved[key] ?? null);

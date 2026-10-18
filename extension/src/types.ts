@@ -1,6 +1,7 @@
 // 定义规则、模型参数、观看记录、备份和扩展消息的数据结构。
 import type { CommentMessage, QuickReadOptions } from './comment-types';
 import type { ChapterDensity, VideoAssistantOptions, VideoMessage } from './video-types';
+import type { BrowseMessage, BrowseOptions } from './browse-types';
 export type Side = 'positive' | 'negative';
 export type WordField = 'text' | 'tags';
 export type EventKind = 'highlight' | 'blocked' | 'watched';
@@ -17,17 +18,21 @@ export interface Settings {
   positiveWins: boolean;
   exactTags: boolean;
   blockAds: boolean;
+  blockSpecialCards: boolean;
   hideCarousel: boolean;
   showMaskReasons: boolean;
   homeSearch: boolean;
   homeWallpaper: string;
   minWatched: number;
   minBlocked: number;
+  autoSamples: boolean;
+  analysisMode: 'general' | 'strict';
   ai: AIOptions;
   providers: AIProvider[];
   review: ReviewOptions;
   quickRead: QuickReadOptions;
   videoAssistant: VideoAssistantOptions;
+  browse: BrowseOptions;
   planMaxLength: number;
 }
 export type ContentSettings = Settings & { reviewRevision?: number };
@@ -62,15 +67,17 @@ export interface Backup {
   decisionApiKey?: string;
 }
 export type Counts = Record<EventKind, number>;
-export interface Snapshot { preferences: Preferences; counts: Counts; reviewError?: string }
+export interface Snapshot { preferences: Preferences; counts: Counts; sampleCounts: { watched: number; blocked: number }; reviewError?: string }
 export type Message =
+  | BrowseMessage
   | VideoMessage
   | { type: 'video-density'; density: ChapterDensity }
+  | { type: 'comments-context'; enabled: boolean }
   | CommentMessage
   | { type: 'suggest'; term: string }
   | { type: 'theme' }
   | { type: 'rules' }
-  | { type: 'open-settings'; section?: 'videoAssistant' }
+  | { type: 'open-settings'; section?: 'videoAssistant' | 'browse' | 'home' }
   | { type: 'tags'; bvid: string }
   | { type: 'review'; bvid: string; title: string; durationSeconds?: number | null }
   | { type: 'record'; event: VideoEvent }
@@ -81,7 +88,7 @@ export type Message =
   | { type: 'debug-clear' }
   | { type: 'save'; settings: Settings; revision: number; apiKey?: string; providerKeys?: Record<string, string>; decisionApiKey?: string }
   | { type: 'plan'; plan: string }
-  | { type: 'samples' }
+  | { type: 'samples'; counts?: { watched: number; blocked: number } }
   | { type: 'result'; result: AnalysisResult }
   | { type: 'export'; includeKey: boolean }
   | { type: 'import'; backup: Backup };

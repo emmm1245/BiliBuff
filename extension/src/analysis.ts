@@ -1,7 +1,7 @@
 // 准备一次分析样本，流式生成增删建议，并按需进行选项式澄清。
 export type { AnalysisSession, AnalysisTurn, AnalysisFollowup } from './analysis/session';
 import { prepareSession, type AnalysisTurn, type AnalysisFollowup } from './analysis/session';
-import { SYSTEM_PROMPT } from './analysis/prompt';
+import { STRICT_ANALYSIS_INSTRUCTION, SYSTEM_PROMPT } from './analysis/prompt';
 import { send } from './client';
 import { modelParameters, validateClarification, validateClarificationAnswer, validatePlan, validateSuggestions } from './core';
 import { analysisOutputSchema, analysisPreviewSchema, type AnalysisPreview } from './analysis/schemas';
@@ -34,7 +34,7 @@ export async function analyze(prefs: Preferences, draft: Settings, signal: Abort
   return requestAI<AnalysisTurn>(prefs, prefs.settings.ai, {
     ...modelParameters(prefs.settings.ai), stream: true,
     ...(connection.provider.type === 'deepseek' ? { response_format: { type: 'json_object' } } : {}), messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: session.rules.analysisMode === 'strict' ? `${SYSTEM_PROMPT}\n${STRICT_ANALYSIS_INSTRUCTION}` : SYSTEM_PROMPT },
       ...session.messages,
     ],
   }, requestSignal, parsedValue => {

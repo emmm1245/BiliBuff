@@ -2,8 +2,8 @@
 import { browser } from 'wxt/browser';
 import { parseMessage } from './messages';
 import { mayAccess } from '../access';
-import { allEvents, counts, mergeEvents, samples } from '../database';
-import { blockedCandidateLimit, selectBlockedSamples } from '../sampling';
+import { allEvents, counts, mergeEvents } from '../database';
+import { analysisPool, selectBlockedSamples } from '../sampling';
 import { currentSettings, migrateSettings, validateBackup, validateEvent, validatePlan, validateResult, validateSettings } from '../core';
 import { requestTags } from '../tags';
 import { createReviewer } from '../review';
@@ -19,6 +19,7 @@ import { registerVideoDownloads } from '../video-download';
 import type { VideoProgress } from '../video-types';
 import { defaultVideoOptions } from '../video-ai';
 import type { VideoSelection } from '../video-types';
+import { createBrowseService } from '../browse-service';
 
 export const PREFERENCES_KEY = 'preferences';
 export function startBackground() {
@@ -44,6 +45,7 @@ export function startBackground() {
   const reviewer = createReviewer(preferences, requestTags);
   const comments = createCommentService(preferences);
   const videos = createVideoService(preferences);
+  const browse = createBrowseService(preferences);
   registerVideoDownloads();
   async function publishTheme(value: unknown) {
     const theme = parseTheme(value);
@@ -60,6 +62,7 @@ export function startBackground() {
     return task;
   }
   async function publish(prefs: Preferences, rulesChanged = false) {
+    browse.invalidate(prefs);
     if (rulesChanged) { reviewer.invalidate(); prefs.reviewRevision = (prefs.reviewRevision ?? 0) + 1; }
     await browser.storage.local.set({ [PREFERENCES_KEY]: prefs });
     if (rulesChanged) {
@@ -72,9 +75,18 @@ export function startBackground() {
   async function handle(message: Message, progress: (value: QuickReadProgress | VideoProgress) => void, owner: string): Promise<unknown> {
     await initialized;
     switch (message.type) {
+      case 'browse-state': case 'browse-refresh': case 'browse-feedback': case 'browse-cancel': return browse.handle(message);
       case 'video-source': case 'video-subtitles': case 'video-selection': case 'video-cache-clear': case 'video-analyze': case 'video-cancel': case 'video-media': case 'video-download':
         return videos(message,progress,owner);
       case 'comments-source': case 'comments-page': case 'comments-cache': case 'comments-analyze': case 'comments-cancel': return comments(message,progress);
+      case 'comments-context': return serialize(async () => {
+        const prefs = await preferences();
+        if (prefs.settings.quickRead.useVideoSummary !== message.enabled) {
+          await publish({ ...prefs, revision: prefs.revision + 1, settings: { ...prefs.settings,
+            quickRead: { ...prefs.settings.quickRead, useVideoSummary: message.enabled } } },true);
+        }
+        return message.enabled;
+      });
       case 'video-density': return serialize(async () => {
         const prefs = await preferences();
         if (prefs.settings.videoAssistant.chapterDensity !== message.density) {
@@ -87,13 +99,18 @@ export function startBackground() {
       case 'theme': return parseTheme((await browser.storage.local.get(THEME_KEY))[THEME_KEY]);
       case 'rules': {
         const prefs = await preferences();
-        return { ...prefs.settings, reviewRevision: prefs.reviewRevision ?? 0 };
+        // 仅覆盖网页的生效值，关闭AI推荐后仍使用原来的留白偏好。
+        return { ...prefs.settings, homeSearch: prefs.settings.homeSearch || prefs.settings.browse.enabled, reviewRevision: prefs.reviewRevision ?? 0 };
       }
-      case 'open-settings': return message.section === 'videoAssistant' ? browser.tabs.create({ url: `${browser.runtime.getURL('/options.html')}#videoAssistant` }) : browser.runtime.openOptionsPage();
+      case 'open-settings': return message.section ? browser.tabs.create({ url: `${browser.runtime.getURL('/options.html')}#${message.section}` }) : browser.runtime.openOptionsPage();
       case 'tags': return requestTags(message.bvid);
       case 'review': return reviewer.request(message.bvid, message.title, message.durationSeconds);
       case 'record': return mergeEvents([validateEvent(message.event)]);
-      case 'snapshot': return { preferences: await preferences(), counts: await counts(), reviewError: reviewer.error() };
+      case 'snapshot': {
+        const pool = analysisPool(await allEvents());
+        return { preferences: await preferences(), counts: await counts(),
+          sampleCounts: { watched: pool.watched.length, blocked: pool.blocked.length }, reviewError: reviewer.error() };
+      }
       case 'debug-state': return debugState();
       case 'debug-toggle':
         if (typeof message.enabled !== 'boolean') throw new Error('调试日志开关无效。');
@@ -103,8 +120,9 @@ export function startBackground() {
       case 'debug-clear': return clearDebugLogs();
       case 'samples': {
         const prefs = await preferences();
-        const [watched, blocked] = await Promise.all([samples('watched'), samples('blocked', blockedCandidateLimit(prefs.settings.minBlocked))]);
-        return { watched, blocked: selectBlockedSamples(blocked, prefs.settings.minBlocked) };
+        const target = message.counts?.blocked ?? prefs.settings.minBlocked;
+        const pool = analysisPool(await allEvents());
+        return { watched: pool.watched.slice(0, message.counts?.watched ?? 100), blocked: selectBlockedSamples(pool.blocked, target) };
       }
       case 'save': return serialize(async () => {
         const prefs = await preferences();
@@ -122,6 +140,7 @@ export function startBackground() {
           else if (!next.decisionApiKey || !settings.review.workspaceId) throw new Error('启用 AI 复核前，请填写对应密钥及阿里云业务空间标识。');
         }
         if (settings.quickRead.auto) aiConnection(next, settings.quickRead);
+        if (settings.browse.enabled) { validatePlan(prefs.plan,settings.planMaxLength); aiConnection(next,settings.browse); }
         if (settings.videoAssistant.autoSummary) aiConnection(next,settings.videoAssistant.summary);
         if (settings.videoAssistant.autoChapters || settings.videoAssistant.autoSkipAds) aiConnection(next,settings.videoAssistant.chapters);
         await publish(next, true);

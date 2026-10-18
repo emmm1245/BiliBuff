@@ -1,7 +1,7 @@
 // 持久管理独立AI日志数据库、开关和清除后的迟到写入，不改变历史存储名称。
 import { browser } from 'wxt/browser';
 export const DEBUG_ENABLED_KEY = 'debug-logging-enabled';
-export type AIDebugFeature = '计划分析' | 'AI 通用复核' | 'AI 决策复核' | '评论速读' | '视频总结' | '视频章节' | '视频问答';
+export type AIDebugFeature = '计划分析' | '自动选量' | 'AI 通用复核' | 'AI 决策复核' | '评论速读' | '视频总结' | '视频章节' | '视频问答' | 'AI帮你刷';
 export interface AIDebugLog {
   id: string;
   feature: AIDebugFeature;

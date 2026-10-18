@@ -3,6 +3,6 @@ export function mayAccess(type: string, sender: { id?: string; url?: string; fra
   if (sender.id !== extensionId) return false;
   if (sender.url?.split('#',1)[0] === optionsUrl) return true;
   if (sender.frameId !== 0 || !sender.url?.startsWith('https://www.bilibili.com/')) return false;
-  return ['rules', 'theme', 'suggest', 'tags', 'review', 'record', 'open-settings', 'comments-source', 'comments-page', 'comments-cache', 'comments-analyze', 'comments-cancel',
+  return ['rules', 'theme', 'suggest', 'tags', 'review', 'record', 'open-settings', 'browse-state', 'browse-refresh', 'browse-cancel', 'browse-feedback', 'comments-source', 'comments-page', 'comments-cache', 'comments-analyze', 'comments-cancel', 'comments-context',
     'video-source', 'video-subtitles', 'video-density', 'video-selection', 'video-cache-clear', 'video-analyze', 'video-cancel', 'video-media', 'video-download'].includes(type);
 }

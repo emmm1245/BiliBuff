@@ -102,7 +102,7 @@ export function createVideoService(preferences: () => Promise<Preferences>) {
           chapters.push(...rows);
         } else {
           const text = await model(task === 'chat'
-            ? '只根据当前字幕用中文回答问题，历史对话只用于理解追问。找不到依据就说明。直接输出正文，不要JSON或代码围栏。引用用[[字幕行号]]标记，必须来自本次输入，最多6条。'
+            ? '只根据当前字幕用中文回答问题，历史对话只用于理解追问。找不到依据就说明。直接输出正文，不要JSON或代码围栏。引用用[[字幕行号]]标记，例如[[30]]，每条选择最相关的一行，不用区间，必须来自本次输入，最多6条。'
             : '完整概括本次字幕的核心内容、结论和重要细节，保留限定条件。直接输出中文总结正文，可用换行和项目符号组织，不要JSON或代码围栏。',data) as string;
           if (task === 'chat') videoAnswer(text,chunk.first,chunk.last).refs.forEach(id => allowedRefs.add(id));
           texts.push(text);
@@ -142,8 +142,7 @@ export function createVideoService(preferences: () => Promise<Preferences>) {
         }
         const value = merged[0]!;
         if (message.task === 'chat') {
-          const { answer, refs } = videoAnswer(value,0,cache.rows.length-1);
-          if (refs.some(id => !allowedRefs.has(id))) throw new Error('回答包含无效字幕引用，未保存，请重试。');
+          const { answer, refs } = videoAnswer(value,0,cache.rows.length-1,allowedRefs);
           result = await save(cache,previous => ({ ...previous, answers: [...previous.answers,{ question, answer, refs, selection, at: Date.now() }].slice(-20) }));
         } else result = await save(cache,previous => ({ ...previous, summary: { value: { summary: value, points: [] }, selection, fingerprint: cache.fingerprint, at: Date.now() } }));
       }

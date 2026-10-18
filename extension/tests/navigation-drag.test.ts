@@ -91,7 +91,7 @@ test('拖过栏目时预览换位并播放移动动画，松手后保存顺序',
   ], { duration: 180, easing: 'ease-out' });
   expect(setItem).not.toHaveBeenCalled();
   rows.get('rules')!.onDrop!({ preventDefault: vi.fn() } as unknown as DragEvent<HTMLDivElement>);
-  expect(setItem).toHaveBeenCalledWith(NAVIGATION_ORDER_KEY, JSON.stringify(['home', 'rules', 'quickRead', 'videoAssistant', 'analysis', 'services', 'data']));
+  expect(setItem).toHaveBeenCalledWith(NAVIGATION_ORDER_KEY, JSON.stringify(['home', 'rules', 'browse', 'quickRead', 'videoAssistant', 'analysis', 'services', 'data']));
 });
 
 test('取消拖动恢复原顺序，跨组拖动不换位', () => {

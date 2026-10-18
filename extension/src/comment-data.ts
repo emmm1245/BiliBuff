@@ -2,7 +2,7 @@
 import type { CommentRecord, QuickReadOptions, VideoCommentsSource } from './comment-types';
 
 export function quickReadKey(options: QuickReadOptions) {
-  return JSON.stringify([1, options.providerId, options.model, options.limit, options.valuableCount]);
+  return JSON.stringify([1, options.providerId, options.model, options.limit, options.valuableCount, ...(options.useVideoSummary ? ['video-summary'] : [])]);
 }
 export function commentLink(bvid: string, comment: Pick<CommentRecord, 'id' | 'root'>) {
   const url = new URL(`https://www.bilibili.com/video/${bvid}/`);
@@ -32,7 +32,7 @@ export function selectComments(comments: CommentRecord[], limit: number, lengths
   }
   return [...selected.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
 }
-export function quickReadInput(source: VideoCommentsSource, comments: CommentRecord[], total: number, complete: boolean, expected?: number) {
+export function quickReadInput(source: VideoCommentsSource, comments: CommentRecord[], total: number, complete: boolean, expected?: number, videoSummary?: { summary: string; points: string[] }) {
   const ids = new Map(comments.map((comment,index) => [comment.id,index+1]));
   const references = new Map(comments.map((comment,index) => [String(index+1),comment.id]));
   const missing = new Map<string,number>();
@@ -45,6 +45,7 @@ export function quickReadInput(source: VideoCommentsSource, comments: CommentRec
     return missing.get(id)!;
   };
   return { references, content: JSON.stringify({ title: source.title, collected: total, selected: comments.length, collectionComplete: complete, expected,
+    ...(videoSummary ? { videoSummary } : {}),
     columns: ['id','root','parent','likes','text'],
     comments: comments.map((comment,index) => [index+1,reference(comment.root),reference(comment.parent),comment.likes,comment.text]) }) };
 }

@@ -29,7 +29,7 @@ export function AIServiceSettings({ draft, setDraft, keyInput, setKeyInput, prov
   return <Card className={styles.card}>
     <h2>已配置服务</h2>
     <div className={styles.providerList}>{draft.providers.map(provider => {
-      const used = (draft.ai.providerId ?? 'deepseek') === provider.id || draft.quickRead.providerId === provider.id || (draft.review.mode === 'general' && (draft.review.providerId ?? 'deepseek') === provider.id) || (['summary','chapters','chat'] as const).some(task => draft.videoAssistant[task].providerId === provider.id);
+      const used = (draft.ai.providerId ?? 'deepseek') === provider.id || draft.browse.providerId === provider.id || draft.quickRead.providerId === provider.id || (draft.review.mode === 'general' && (draft.review.providerId ?? 'deepseek') === provider.id) || (['summary','chapters','chat'] as const).some(task => draft.videoAssistant[task].providerId === provider.id);
       return <ProviderCard key={provider.id} provider={provider} used={used} onChange={change => update(provider.id, change)}
         apiKey={provider.id === 'deepseek' ? keyInput : providerKeys[provider.id] ?? ''}
         onKeyChange={value => provider.id === 'deepseek' ? setKeyInput(value) : setProviderKeys({ ...providerKeys, [provider.id]: value })}

@@ -32,7 +32,10 @@ export function attachSearchPanel(root: ShadowRoot, suggest: (term: string) => P
   function close(collapse = true) {
     epoch++; clearTimeout(timer); selected = -1; panel.hidden = true;
     input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
-    if (collapse) { home.classList.remove('search-active'); home.scrollTop = 0; }
+    if (collapse) {
+      home.classList.remove('search-active');
+      if (!home.classList.contains('has-browse')) home.scrollTop = 0;
+    }
   }
   function select(index: number) {
     selected = index;

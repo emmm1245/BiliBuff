@@ -1,0 +1,32 @@
+/* 留白首页推荐的自适应卡片、内容状态和蓝粉赞踩，沿用共用主题变量。 */
+.home.has-browse .search-area { --logo-width: 168px; min-height: 0; padding-top: clamp(32px, 6svh, 72px); padding-bottom: 20px; }
+.home.has-browse .logo { margin-bottom: 24px; }
+.home.has-browse .quote { margin-top: 24px; }
+.browse-mount { width: min(1180px, calc(100% - 64px)); margin: 0 auto; padding: 4px 0 100px; }
+.browse-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 20px; }
+.browse-heading h2 { margin: 0; color: var(--home-text); font-size: 18px; font-weight: 600; }
+.browse-tools { display: flex; align-items: center; gap: 8px; }
+.browse button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--home-chip-border); border-radius: 8px; padding: 7px 11px; color: var(--home-settings-text); background: var(--home-search-bg); font: 13px/1.4 "Microsoft YaHei", system-ui, sans-serif; cursor: pointer; transition: color .15s, background-color .15s; }
+.browse button:hover { color: #00aeec; background: var(--home-panel-bg); }
+.browse button:disabled { cursor: default; opacity: .5; }
+.browse button:focus-visible, .browse a:focus-visible { outline: 2px solid #00aeec; outline-offset: 3px; }
+.browse-status, .browse-error { margin: 0 0 20px; color: var(--home-settings-text); font-size: 13px; }
+.browse-error { color: var(--home-error); }
+.browse-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 26px 20px; }
+.browse-card { min-width: 0; }
+.browse-cover { position: relative; display: block; width: 100%; aspect-ratio: 16/9; overflow: hidden; border-radius: 10px; background: var(--home-chip-bg); }
+.browse-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.browse-cover > span { position: absolute; bottom: 7px; right: 7px; padding: 1px 5px; border-radius: 4px; color: #fff; background: rgb(0 0 0 / 65%); font-size: 12px; }
+.browse-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-height: 44px; margin: 10px 0 4px; overflow: hidden; overflow-wrap: anywhere; color: var(--home-text); text-decoration: none; font-size: 14px; line-height: 22px; }
+.browse-title:hover { color: #00aeec; }
+.browse-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.browse-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--home-settings-text); font-size: 12px; }
+.browse-votes { display: flex; flex-shrink: 0; gap: 2px; }
+.browse-votes button { width: 32px; height: 30px; padding: 6px; border-color: transparent; background: transparent; }
+.browse-votes .browse-like[aria-pressed=true] { color: #00aeec; background: var(--home-chip-bg); }
+.browse-votes .browse-dislike[aria-pressed=true] { color: var(--home-quote); background: var(--home-chip-bg); }
+.browse-disliked .browse-cover, .browse-disliked .browse-title { opacity: .5; }
+@media (max-width: 1000px) { .browse-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .browse-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 14px; } .browse-mount { width: calc(100% - 36px); } }
+@media (max-width: 480px) { .home.has-browse .search-area { padding-top: 40px; } .browse-heading { gap: 8px; } .browse-heading h2 { font-size: 16px; } .browse-tools { gap: 4px; } .browse button { padding: 7px 8px; } .browse-votes button { padding: 6px; } }
+@media (prefers-reduced-motion: reduce) { .browse button { transition: none; } }

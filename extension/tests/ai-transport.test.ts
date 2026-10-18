@@ -2,11 +2,21 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { requestAI } from '../src/ai-request';
 import { suggestionsSchema } from '../src/analysis/schemas';
+import { browseProfileSchema } from '../src/browse-ranking';
 import { migrateSettings, validateSuggestions } from '../src/core';
 import type { Preferences } from '../src/types';
 vi.mock('wxt/browser', () => ({ browser: { permissions: { contains: async () => true }, storage: { local: { get: async () => ({}) } } } }));
 afterEach(() => vi.unstubAllGlobals());
 const prefs: Preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: 'offline', result: null };
+
+test('真实故障回放：计划排除列表38项时SDK仍应接受完整结果，不在找片前失败', async () => {
+  // 保留用户日志中的结构和项数，替换个人词条；响应经过真实SDK的流式结构校验。
+  const profile = { goals: ['学习专业知识'],topics: ['数学','英语','专业课'],excluded: Array.from({ length: 38 },(_,i) => `排除主题${i}`),formats: ['不限'],uncertainties: ['简称的具体范围未展开'] };
+  vi.stubGlobal('fetch',vi.fn(async () => response(event(JSON.stringify(profile),'stop')+'data: [DONE]\n\n',64)));
+  const result = await requestAI(prefs,prefs.settings.browse,{ stream: true,messages: [{ role: 'user',content: '整理计划' }] },new AbortController().signal,
+    value => browseProfileSchema.parse(value),'AI帮你刷',{ schema: browseProfileSchema });
+  expect(result).toEqual(profile);
+});
 function event(content: string, finish: string | null = null) {
   return `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: finish }] })}\r\n\r\n`;
 }
@@ -22,6 +32,23 @@ function run(response: Response, signal = new AbortController().signal, preview 
   return requestAI(prefs,prefs.settings.ai,{ stream: true, messages: [{ role: 'user', content: '离线输入' }] },signal,
     value => plain ? value : validateSuggestions(value),'计划分析',{ ...(plain ? {} : { schema: suggestionsSchema }), preview, thinking });
 }
+test('DeepSeek 结构化输出兼容提示不刷警告，其他警告继续保留', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const data = event('{"summary":"结果","suggestions":[]}', 'stop') + 'data: [DONE]\n\n';
+    expect(await run(response(data))).toMatchObject({ summary: '结果' });
+    expect(warn).not.toHaveBeenCalled();
+    const logger = globalThis.AI_SDK_LOG_WARNINGS;
+    if (typeof logger !== 'function') throw new Error('缺少警告处理函数');
+    const warning = { type: 'unsupported' as const, feature: 'test' };
+    logger({ provider: 'deepseek.chat', model: 'deepseek-flash', warnings: [warning] });
+    expect(warn).toHaveBeenCalledWith('AI SDK Warning', { provider: 'deepseek.chat', model: 'deepseek-flash', warning });
+    warn.mockClear();
+    logger({ provider: 'other.chat', model: 'test', warnings: [{ type: 'compatibility', feature: 'responseFormat JSON schema', details: 'JSON response schema is injected into the system message.' }] });
+    expect(warn).toHaveBeenCalledTimes(1);
+  } finally { warn.mockRestore(); }
+});
+
 test('中文按单字节分块、换行和保活注释仍能正确解码，完整结果前有正文预览', async () => {
   const preview = vi.fn(), thinking = vi.fn();
   const data = ': keep-alive\r\n\r\n' + event('{"summary":"中文') + event('分析","suggestions":[]}') + event('','stop') + 'data: [DONE]\n\n';

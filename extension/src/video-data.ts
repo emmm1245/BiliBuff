@@ -12,10 +12,19 @@ export function videoTimeline(source: VideoSource | null, cache: VideoCache | nu
   if (!cache || cache.source.cid !== source?.cid) return [];
   return cache.chapters?.value.map(chapter => ({ start: cache.rows[chapter.first]!.start, end: cache.rows[chapter.last]!.end, title: chapter.title, summary: chapter.summary, ad: chapter.ad })) ?? [];
 }
-export function videoAnswer(text: string, first: number, last: number) {
-  const refs = [...new Set([...text.matchAll(/\[\[(\d+)\]\]/g)].map(match => Number(match[1])))];
-  if (refs.length > 6 || refs.some(id => id < first || id > last)) throw new Error('回答包含无效字幕引用，未保存，请重试。');
-  const answer = text.replace(/\[\[\d+\]\]/g,'').trim();
+const videoReference = /\[\[\s*(\d+(?:\s*[-–—]\s*\d+)?(?:\s*,\s*\d+(?:\s*[-–—]\s*\d+)?)*)\s*\]\]/g;
+export function videoAnswerText(text: string, streaming = false) {
+  const answer = text.replace(videoReference,'');
+  return streaming ? answer.replace(/\[\[[\d,\s–—-]*\]?$|\[$/g,'') : answer;
+}
+export function videoAnswer(text: string, first: number, last: number, allowedRefs?: ReadonlySet<number>) {
+  // 区间仅生成起始字幕的定位入口，避免连续多行挤占六条来源名额。
+  const refs = [...new Set([...text.matchAll(videoReference)].flatMap(match => match[1]!.split(',').flatMap(ref => {
+    const [start, end = start] = ref.split(/[-–—]/).map(Number) as [number, number?];
+    return start >= first && end >= start && end <= last ? [start] : [];
+  })))]
+    .filter(id => id >= first && id <= last && (!allowedRefs || allowedRefs.has(id))).slice(0,6);
+  const answer = videoAnswerText(text).trim();
   if (!answer) throw new Error('模型未返回有效正文，请重试。');
   return { answer, refs };
 }

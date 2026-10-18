@@ -22,12 +22,18 @@ test('签名散列兼容空串、中文、跨块文本及UTF8，WBI签名使用�
 test('旧配置补齐速读默认值、备份保留新配置并拒绝无效参数', () => {
   const { quickRead, ...old } = migrateSettings();
   expect(currentSettings(old).quickRead).toEqual(quickRead);
-  expect(quickRead).toMatchObject({ auto: false, limit: 1000, valuableCount: 5 });
+  expect(quickRead).toMatchObject({ auto: false, autoMinutes: 3, useVideoSummary: false, limit: 1000, valuableCount: 5 });
+  const legacy = { auto: true, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' };
+  expect(validateSettings({ ...old, quickRead: legacy }).quickRead).toEqual({ ...quickRead, auto: true });
   const settings = validateSettings({ ...old, quickRead: { ...quickRead, limit: 50, valuableCount: 10 } });
   expect(validateBackup({ format: 'bilibili-focus-backup', version: 1, settings, plan: '', events: [], result: null }).settings.quickRead.limit).toBe(50);
   for (const value of [0,1.5,10001,'1000']) expect(() => validateSettings({ ...old, quickRead: { ...quickRead, limit: value } })).toThrow('速读');
   expect(quickReadKey(quickRead)).toBe(quickReadKey({ ...quickRead, auto: true }));
   expect(quickReadKey(quickRead)).not.toBe(quickReadKey({ ...quickRead, limit: 10 }));
+  expect(quickReadKey(quickRead)).toBe(quickReadKey({ ...quickRead, autoMinutes: 10 }));
+  expect(quickReadKey(quickRead)).not.toBe(quickReadKey({ ...quickRead, useVideoSummary: true }));
+  for (const autoMinutes of [0,-1,1.5,'3']) expect(() => validateSettings({ ...old, quickRead: { ...quickRead, autoMinutes } })).toThrow('速读');
+  expect(validateSettings({ ...old, quickRead: { ...quickRead, autoMinutes: 8, useVideoSummary: true } }).quickRead).toMatchObject({ autoMinutes: 8, useVideoSummary: true });
 });
 test('超过1000条时淘汰短评，去重后不超上限；长度相同优先保留高赞', () => {
   const records = Array.from({ length: 1001 },(_,i) => comment(String(i+1),'长评内容'.repeat(5),{ likes: i }));
@@ -224,4 +230,30 @@ test('旧缓存中的部分结果恢复时保留不完整标记', async () => {
   storage.get.mockResolvedValue({ 'comment-quick-reads': { BVtest: { key: quickReadKey(prefs.settings.quickRead), complete: false } } });
   expect(await createCommentService(async () => prefs)({ type: 'comments-cache', bvid: 'BVtest' })).toMatchObject({ complete: false });
   storage.get.mockResolvedValue({});
+});
+
+test.each(['已勾选','未勾选','无总结','读取失败','字幕已变化'] as const)('速读总结背景：%s时仅附加可用缓存，不额外生成视频总结', async mode => {
+  const prefs: Preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: 'test', result: null };
+  prefs.settings.quickRead.useVideoSummary = mode !== '未勾选';
+  const value = { summary: '第二P的已有总结', points: ['核心观点'] };
+  const entry = (bvid: string, page: number, summary: string, at: number) => ({ source: { bvid, page }, fingerprint: 'current',
+    summary: { value: { ...value, summary }, fingerprint: 'current', at } });
+  const cached = { other: entry('BVother',2,'其他视频总结',100), first: entry('BVtest',1,'第一P总结',100),
+    old: entry('BVtest',2,'较旧语言总结',1), latest: entry('BVtest',2,value.summary,2) };
+  if (mode === '字幕已变化') { cached.old.summary.fingerprint = 'stale'; cached.latest.summary.fingerprint = 'stale'; }
+  storage.get.mockImplementation(async key => {
+    if (key !== 'video-workbench-cache') return {};
+    if (mode === '读取失败') throw new Error('总结不可读');
+    return { 'video-workbench-cache': mode === '无总结' ? {} : cached };
+  });
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ summary: '评论总览', topics: [], valuable: [] }) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n`));
+  vi.stubGlobal('fetch',fetch);
+  try {
+    const result = await createCommentService(async () => prefs)({ type: 'comments-analyze', requestId: 'context', source, comments: [comment('1')], total: 1, page: 2 });
+    expect(result).toMatchObject({ summary: '评论总览', selected: 1 }); expect(fetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetch.mock.calls[0]![1]!.body as string), input = JSON.parse(body.messages[1].content);
+    if (mode === '已勾选') expect(input.videoSummary).toEqual(value); else expect(input).not.toHaveProperty('videoSummary');
+    expect(input.comments).toEqual([[1,0,0,0,'正文']]);
+    expect(body.messages[0].content).toContain('仅作为理解评论的额外背景');
+  } finally { storage.get.mockResolvedValue({}); }
 });

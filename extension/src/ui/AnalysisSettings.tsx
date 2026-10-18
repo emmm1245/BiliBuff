@@ -15,9 +15,11 @@ export function AnalysisSettings({ draft, setDraft, onServices }: {
     <summary>分析设置</summary>
     <div className={styles.sectionHeading}><h3>服务与模型</h3><Button className={styles.textButton} onClick={onServices}>管理 AI 服务</Button></div>
     <div className={styles.formGrid}><ModelSelection providers={draft.providers} providerId={draft.ai.providerId} model={draft.ai.model} onChange={updateAI} /></div>
-    <div className={styles.settingsGroup}><h3>计划与样本</h3><div className={styles.formGrid}>
+    <div className={styles.settingsGroup}><h3>计划与样本</h3>
+    <label className={styles.switch}><input type="checkbox" role="switch" checked={draft.autoSamples} onChange={event => setDraft({ ...draft, autoSamples: event.target.checked })} />自动选量</label>
+    <p className={styles.notice}>自动选择合适的分析素材量</p><div className={styles.formGrid}>
       <label>计划字数上限<Input type="number" min="1" max="6000" step="1" value={draft.planMaxLength} onChange={event => setDraft({ ...draft, planMaxLength: Number(event.target.value) })} /></label>
-      {(['minWatched', 'minBlocked'] as const).map(field => <label key={field}>{field === 'minWatched' ? '观看样本门槛' : '屏蔽样本数量'}<Input type="number" min="1" max={field === 'minBlocked' ? 1000 : 100} step="1" value={draft[field]} onChange={event => setDraft({ ...draft, [field]: Number(event.target.value) })} /></label>)}
+      {(['minWatched', 'minBlocked'] as const).map(field => <label key={field}>{field === 'minWatched' ? '观看样本门槛' : '屏蔽样本数量'}<Input type="number" disabled={draft.autoSamples} min="1" max={field === 'minBlocked' ? 1000 : 100} step="1" value={draft[field]} onChange={event => setDraft({ ...draft, [field]: Number(event.target.value) })} /></label>)}
     </div></div>
     <div className={styles.settingsGroup}><h3>生成参数</h3><div className={styles.formGrid}>
       <label>输出上限（词元）<Input type="number" min="1024" max="393216" step="1" value={draft.ai.maxTokens} onChange={event => updateAI({ maxTokens: Number(event.target.value) })} /></label>

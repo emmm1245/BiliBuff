@@ -6,6 +6,7 @@ import type { CommentPage, QuickReadResult, VideoCommentsSource } from '../comme
 import type { ChapterDensity, MediaChoice, VideoAssistantOptions, VideoCache, VideoSource } from '../video-types';
 import type { AIDebugLog } from '../ai-debug';
 import type { Theme } from '../theme';
+import type { BrowseState } from '../browse-types';
 
 const text = z.string();
 const bvid = text.regex(/^BV\w+$/);
@@ -17,8 +18,11 @@ const comment = z.object({ id: text.regex(/^\d+$/), root: text, parent: text, au
 // 设置、建议和备份沿用各业务保存边界的完整校验，避免在传输边界提前丢失旧字段默认值与空密钥语义。
 export const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('suggest'), term: text.max(100) }),
-  ...(['theme','rules','snapshot','debug-state','debug-export','debug-clear','samples','video-selection'] as const).map(type => z.object({ type: z.literal(type) })),
-  z.object({ type: z.literal('open-settings'), section: z.literal('videoAssistant').optional() }),
+  ...(['browse-state','browse-refresh','browse-cancel'] as const).map(type => z.object({ type: z.literal(type) })),
+  z.object({ type: z.literal('browse-feedback'), bvid, vote: z.union([z.literal(1),z.literal(-1),z.literal(0)]) }),
+  ...(['theme','rules','snapshot','debug-state','debug-export','debug-clear','video-selection'] as const).map(type => z.object({ type: z.literal(type) })),
+  z.object({ type: z.literal('samples'), counts: z.object({ watched: z.number().int().min(0).max(100), blocked: z.number().int().min(0).max(1000) }).optional() }),
+  z.object({ type: z.literal('open-settings'), section: z.enum(['videoAssistant','browse','home']).optional() }),
   z.object({ type: z.literal('tags'), bvid }),
   z.object({ type: z.literal('review'), bvid, title: text.min(1).max(300), durationSeconds: cid.nullable().optional() }),
   z.object({ type: z.literal('record'), event: eventSchema }),
@@ -31,7 +35,8 @@ export const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('comments-source'), bvid }),
   z.object({ type: z.literal('comments-page'), oid: text.regex(/^\d+$/), root: text.regex(/^\d+$/).optional(), pn: cid.optional(), offset: text.optional() }),
   z.object({ type: z.literal('comments-cache'), bvid }),
-  z.object({ type: z.literal('comments-analyze'), requestId, source: z.object({ bvid, oid: text.regex(/^\d+$/), title: text }), comments: z.array(comment).min(1).max(10000), total: z.number().int().nonnegative(), complete: z.boolean().optional(), expected: z.number().optional() }),
+  z.object({ type: z.literal('comments-analyze'), requestId, source: z.object({ bvid, oid: text.regex(/^\d+$/), title: text }), comments: z.array(comment).min(1).max(10000), total: z.number().int().nonnegative(), complete: z.boolean().optional(), expected: z.number().optional(), page: cid.optional() }),
+  z.object({ type: z.literal('comments-context'), enabled: z.boolean() }),
   z.object({ type: z.literal('comments-cancel'), requestId }),
   z.object({ type: z.literal('video-density'), density: z.enum(['concise','balanced','detailed']) }),
   z.object({ type: z.literal('video-source'), bvid, page: cid, cid: cid.optional() }),
@@ -48,11 +53,12 @@ export function parseMessage(value: unknown): Message {
   return parsed.data as Message;
 }
 export interface MessageResults {
+  'browse-state': BrowseState; 'browse-refresh': BrowseState; 'browse-cancel': void; 'browse-feedback': BrowseState;
   suggest: string[]; theme: Theme; rules: ContentSettings; 'open-settings': unknown; tags: string[]; review: ReviewVerdict; record: unknown;
   snapshot: Snapshot; 'debug-state': { enabled: boolean; count: number }; 'debug-toggle': void; 'debug-clear': void;
   'debug-export': { format: string; version: number; exportedAt: string; logs: AIDebugLog[] };
   save: Preferences; plan: void; samples: { watched: VideoEvent[]; blocked: VideoEvent[] }; result: AnalysisResult; export: Backup; import: void;
-  'comments-source': VideoCommentsSource; 'comments-page': CommentPage; 'comments-cache': QuickReadResult | null; 'comments-analyze': QuickReadResult; 'comments-cancel': void;
+  'comments-source': VideoCommentsSource; 'comments-page': CommentPage; 'comments-cache': QuickReadResult | null; 'comments-analyze': QuickReadResult; 'comments-cancel': void; 'comments-context': boolean;
   'video-density': ChapterDensity; 'video-source': VideoSource; 'video-subtitles': VideoCache; 'video-selection': VideoAssistantOptions; 'video-cache-clear': void;
   'video-analyze': VideoCache; 'video-cancel': void; 'video-media': MediaChoice[]; 'video-download': unknown;
 }

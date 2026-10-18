@@ -13,9 +13,10 @@ export interface CommentCardState {
   status: string; error: string; collecting: boolean; paused: boolean; analyzing: boolean; preview: string; complete: boolean; loadingCache: boolean;
   partial?: QuickReadPreview;
   total: number; expected: number; selected: number; result: QuickReadResult | null;
+  useVideoSummary: boolean; contextSaving?: boolean;
 }
 
-export interface CommentCardActions { collect: () => void; pause: () => void; analyze: () => void; cancel: () => void; copy: (all: boolean) => void; download: (all: boolean) => void; settings: () => void; jump: (id: string) => void }
+export interface CommentCardActions { collect: () => void; pause: () => void; analyze: () => void; cancel: () => void; copy: (all: boolean) => void; download: (all: boolean) => void; settings: () => void; jump: (id: string) => void; context: (enabled: boolean) => void }
 const CommentResult = memo(function CommentResult({ result, jump }: { result: QuickReadResult; jump: (id: string) => void }) {
   const click = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
@@ -50,6 +51,8 @@ export function CommentCard({ state, actions, position, place, mount }: { state:
   }} onPointerUp={() => { ignoreClick.current = drag.current?.moved === true; drag.current = null; }} onPointerCancel={() => { drag.current = null; ignoreClick.current = false; }} onClick={event => { if (ignoreClick.current && event.detail>0) event.preventDefault(); ignoreClick.current = false; }}>
     <span className="grip" aria-hidden="true"><Icon name="grip" size={16} /></span><strong>评论区速读</strong><span className="badge">{badge}</span><span className="chevron" aria-hidden="true"><Icon name="chevronDown" size={16} /></span></summary>
     <div className="body"><p className="status muted" role="status" aria-live="polite">{state.status}</p><p className="counts muted">{counts}</p><p className="error" role="alert" hidden={!state.error}>{state.error}</p>
+      <label className="summary-context"><input type="checkbox" checked={state.useVideoSummary} disabled={state.analyzing || state.contextSaving} onChange={event => actions.context(event.target.checked)} />加入已有视频总结作为背景</label>
+      <small>没有可用总结时该选项不生效。</small>
       <div className="actions"><Button className="analyze primary" disabled={!state.analyzing && (!state.total || state.collecting)} title={!state.total && state.result ? '先检查更新，采集本次评论后可重新速读' : ''} onClick={state.analyzing ? actions.cancel : actions.analyze}>{state.analyzing ? '取消速读' : state.result ? '重新速读' : !state.complete ? '分析已采集' : '开始速读'}</Button><Button className="collect" disabled={state.collecting || state.analyzing} hidden={state.collecting || state.analyzing} title={state.paused ? '从暂停处继续' : '保留已有评论，检查新增和变化；仍需核对分页'} onClick={actions.collect}>{state.paused ? '继续采集' : state.total || state.result ? '检查更新' : '采集评论'}</Button><Button className="pause" hidden={!state.collecting} onClick={actions.pause}>暂停采集</Button><Button className="settings" hidden={state.analyzing} onClick={actions.settings}>设置</Button></div>
       <div className="preview" hidden={!state.analyzing || (!state.preview && !state.partial)} aria-busy={state.analyzing}><h3>速读 · 生成中</h3><Markdown text={state.partial?.summary || state.preview} streaming />
         {state.partial?.topics?.map((topic,index) => topic && (topic.title || topic.summary) && <div key={index}><h3>{topic.title}</h3><Markdown text={topic.summary || ''} streaming /></div>)}
@@ -61,15 +64,31 @@ export function CommentCard({ state, actions, position, place, mount }: { state:
 }
 export function createCommentCard(actions: CommentCardActions) {
   const view = createIsolatedView('bf-comment-read',css), { host } = view;
-  function place(left: number, top: number) {
+  let dragged = false;
+  function clamp(left: number, top: number) {
     const rect = host.getBoundingClientRect();
     host.style.left = `${Math.max(16,Math.min(left,window.innerWidth-rect.width-16))}px`;
     host.style.top = `${Math.max(16,Math.min(top,window.innerHeight-rect.height-16))}px`; host.style.right = 'auto';
   }
+  function place(left: number, top: number) {
+    dragged = true; host.style.position = 'fixed'; clamp(left,top);
+  }
   function mount() {
     if (host.parentElement !== document.body) document.body.append(host);
+    if (!dragged) {
+      const title = document.querySelector('.video-info-container h1, h1.video-title, .video-info-title, .video h1');
+      if (title) {
+        const bounds = title.getBoundingClientRect(), assistant = document.getElementById('bf-video-workbench');
+        const edge = assistant && !assistant.hidden ? Math.min(bounds.right,assistant.getBoundingClientRect().left-12) : bounds.right;
+        host.style.position = 'fixed';
+        // 以页面初始布局定位，滚动到原评论后仍保持悬浮可见。
+        clamp(edge-host.getBoundingClientRect().width+window.scrollX,bounds.bottom+8+window.scrollY);
+        return;
+      }
+      host.style.position = 'fixed'; host.style.left = 'auto'; host.style.right = '16px'; host.style.top = '88px';
+    }
     const rect = host.getBoundingClientRect();
-    if (rect.left<16 || rect.top<16 || rect.right>window.innerWidth-16 || rect.bottom>window.innerHeight-16) place(rect.left,rect.top);
+    if (rect.left<16 || rect.top<16 || rect.right>window.innerWidth-16 || rect.bottom>window.innerHeight-16) clamp(rect.left,rect.top);
   }
   return { host, render: (state: CommentCardState) => view.render(createElement(CommentCard,{ state, actions, position: () => host.getBoundingClientRect(), place, mount })),
     mount, theme: (theme: Theme) => { host.dataset.theme = theme; }, remove: view.remove };

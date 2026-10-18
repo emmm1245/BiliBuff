@@ -5,6 +5,8 @@ const { send, startContent } = vi.hoisted(() => ({ send: vi.fn(), startContent: 
 vi.mock('wxt/utils/define-content-script', () => ({ defineContentScript: (config: unknown) => config }));
 vi.mock('../src/client', () => ({ send }));
 vi.mock('../src/content', () => ({ startContent }));
+// 骨架的挂载与清理由 home-skeleton-entry.test.ts 验证，本文件只关注启动时序。
+vi.mock('../src/filter/home-skeleton', () => ({ holdHomeSkeleton: () => () => {} }));
 import entry from '../entrypoints/bilibili.content';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });

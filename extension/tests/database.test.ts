@@ -39,6 +39,17 @@ test('样本按最近发生时间倒序，最多100条', async () => {
   const recent = await samples('highlight'); expect(recent).toHaveLength(100); expect(recent[0]).toMatchObject({ bvid: 'BVsample119' });
 });
 
+test('三类累计独立去重，观看补标签和重复记录不增加计数', async () => {
+  const before = await counts();
+  const kinds = ['blocked', 'highlight', 'watched'] as const;
+  const records = kinds.map(kind => ({ kind, bvid: 'BVtotals', title: '统计测试', tags: null, at: 100, reason: '' }));
+  await mergeEvents(records);
+  await mergeEvents(records.map(record => ({ ...record, tags: ['学习'], at: 200 })));
+  const after = await counts();
+  for (const kind of kinds) expect(after[kind]).toBe(before[kind] + 1);
+  expect((await allEvents()).filter(record => record.bvid === 'BVtotals')).toHaveLength(3);
+});
+
 test('候选查询支持超过500条，补标签保留屏蔽时间，真实再次屏蔽更新时间', async () => {
   const records: VideoEvent[] = Array.from({ length: 600 }, (_, i) => ({ kind: 'blocked', bvid: `BVcandidate${i}`, title: '矩阵运算', tags: null, at: 1000 + i, reason: '严格模式' }));
   await mergeEvents(records);

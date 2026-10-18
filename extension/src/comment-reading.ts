@@ -2,6 +2,7 @@
 import { browser } from 'wxt/browser';
 import { send } from './client';
 import { playbackBvid } from './core';
+import { videoRoute } from './video-data';
 import { commentsText, quickReadKey, selectComments } from './comment-data';
 import { createCommentCard } from './comment-card';
 import { jumpToComment } from './comment-navigation';
@@ -13,16 +14,27 @@ import type { Theme } from './theme';
 export function startCommentReading(initial: ContentSettings, signal: AbortSignal) {
   let settings = initial, bvid = '', source: VideoCommentsSource | null = null, generation = 0, watched = 0;
   let started = false, autoAttempted = false, job: AbortController | null = null, requestId = '';
-  let playbackActive = false;
+  let playbackActive = false, collectionReady = false;
   let collection: AbortController | null = null, resumeCollection: (() => void) | null = null, collectionStatus = '';
   let navigation: AbortController | null = null;
   let navigationTask: Promise<void> = Promise.resolve();
   const comments = new Map<string, CommentRecord>();
   const lengths = new Map<string, { text: string; length: number }>();
   let selectionDirty = false, lastSelection = -Infinity;
-  const state: CommentCardState = { status: '播放后开始采集评论。', error: '', collecting: false, paused: false, analyzing: false, preview: '', complete: false, loadingCache: false, total: 0, expected: 0, selected: 0, result: null };
+  const state: CommentCardState = { status: '播放后开始采集评论。', error: '', collecting: false, paused: false, analyzing: false, preview: '', complete: false, loadingCache: false, total: 0, expected: 0, selected: 0, result: null, useVideoSummary: settings.quickRead.useVideoSummary };
   const view = createCommentCard({ collect: () => { void collect(); }, pause: pauseCollection, analyze: () => { void analyze(); }, cancel,
-    copy: all => exportText(all,false), download: all => exportText(all,true), settings: () => { void send({ type: 'open-settings' }); }, jump: id => { void navigate(id); } });
+    copy: all => exportText(all,false), download: all => exportText(all,true), settings: () => { void send({ type: 'open-settings' }); }, jump: id => { void navigate(id); }, context: enabled => { void setContext(enabled); } });
+  async function setContext(enabled: boolean) {
+    state.contextSaving = true; state.error = ''; update();
+    try {
+      const saved = await send({ type: 'comments-context', enabled });
+      if (signal.aborted) return;
+      settings = { ...settings, quickRead: { ...settings.quickRead, useVideoSummary: saved } };
+      state.useVideoSummary = saved; state.result = null;
+    } catch (error) {
+      if (!signal.aborted) state.error = errorText(error);
+    } finally { state.contextSaving = false; update(); }
+  }
   function update(changed = false, force = false) {
     if (signal.aborted) return;
     state.total = comments.size;
@@ -47,7 +59,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
   function activate(id: string) {
     navigation?.abort();
     collection?.abort(); collection = null;
-    cancel(); bvid = id; generation++; source = null; comments.clear(); lengths.clear(); watched = 0; started = false; autoAttempted = false; playbackActive = false;
+    cancel(); bvid = id; generation++; source = null; comments.clear(); lengths.clear(); watched = 0; started = false; autoAttempted = false; playbackActive = false; collectionReady = false;
     Object.assign(state,{ status: '正在读取本地速读缓存……', error: '', collecting: false, paused: false, complete: false, loadingCache: !!id, expected: 0, result: null });
     if (!id) { view.remove(); return; }
     update(true,true);
@@ -113,13 +125,14 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     };
     const previous = new Set(comments.keys()), seen = new Set<string>(), roots = new Map<string,CommentRecord>();
     const previews = new Map<string,Set<string>>();
+    collectionReady = false;
     state.collecting = true; state.paused = false; state.complete = false; state.error = '';
     collectionStatus = state.status = previous.size ? '保留已有评论，正在检查新增与变化……' : '正在读取主评论……'; update();
     const add = (page: CommentPage) => { for (const comment of page.comments) comments.set(comment.id,comment); update(true); };
     try {
       if (!source) { const resolved = await send({ type: 'comments-source', bvid: id }); active(); source = resolved; }
       const oid = source.oid;
-      let offset = '', noProgress = 0, selected = false;
+      let offset = '', noProgress = 0, selected = false, repliesComplete = true;
       for (;;) {
         await ready();
         const page = await send({ type: 'comments-page', oid, offset }); active();
@@ -150,11 +163,16 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
           if (page.end) break;
           if (!page.comments.length) throw new Error('回复分页提前返回空数据，采集未完成；可以导出已读取的内容。');
         }
-        if (ids.size !== expected) throw new Error('楼中楼数量发生变化或存在不可见回复，暂时无法确认完整；可导出已采集内容，稍后检查更新。');
+        if (ids.size !== expected) repliesComplete = false;
         for (const id of ids) seen.add(id);
       }
       active();
-      if (selected || seen.size !== state.expected) throw new Error(selected ? '这是精选评论区，无法确认覆盖全部讨论；可以导出当前可见评论。' : `本轮核对${seen.size}条，接口显示${state.expected}条；评论可能发生变化或存在可见性限制，已有内容已保留，可检查更新或分析已采集。`);
+      // 翻页结束即可分析；数量核对只决定是否能声明完整覆盖。
+      collectionReady = true;
+      if (selected || !repliesComplete || seen.size !== state.expected) {
+        state.status = '采集完成，已就绪，可分析已采集评论或导出；评论数量变化或可见性限制使完整覆盖无法确认。';
+        return;
+      }
       const added = [...seen].filter(id => !previous.has(id)).length;
       let removed = 0;
       for (const id of comments.keys()) if (!seen.has(id)) { comments.delete(id); lengths.delete(id); removed++; }
@@ -167,12 +185,12 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     }
   }
   async function analyze() {
-    if (!source || job || state.collecting || !comments.size || signal.aborted) return;
+    if (!source || job || state.collecting || state.contextSaving || !comments.size || signal.aborted) return;
     const controller = new AbortController(), epoch = generation; job = controller; requestId = crypto.randomUUID(); autoAttempted = true;
     const id = requestId; state.analyzing = true; state.preview = ''; state.partial = undefined; state.error = ''; state.status = '正在整理评论，最长等待4分钟……'; update(false,true);
     try {
       const selected = selectComments([...comments.values()],settings.quickRead.limit,lengths);
-      const result = await send({ type: 'comments-analyze', requestId: id, source, comments: selected, total: comments.size, complete: state.complete, expected: state.expected });
+      const result = await send({ type: 'comments-analyze', requestId: id, source, comments: selected, total: comments.size, complete: state.complete, expected: state.expected, page: videoRoute(location.pathname,location.search).page });
       if (controller.signal.aborted || signal.aborted || epoch !== generation) return;
       state.result = result;
       state.status = result.complete === false
@@ -185,7 +203,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     }
   }
   function maybeAuto() {
-    if (!settings.quickRead.auto || watched <= 300 || autoAttempted || state.result || !state.complete || !comments.size || job) return;
+    if (!settings.quickRead.auto || watched <= settings.quickRead.autoMinutes * 60 || state.contextSaving || autoAttempted || state.result || !collectionReady || collection || state.paused || !comments.size || job) return;
     autoAttempted = true; void analyze();
   }
   function exportText(all: boolean, download: boolean) {
@@ -224,6 +242,7 @@ export function startCommentReading(initial: ContentSettings, signal: AbortSigna
     watch(id: string, seconds: number, playing: boolean) { if (id !== bvid) activate(id); watched = seconds; playbackActive = playing; maybeCollect(); maybeAuto(); },
     configure(next: ContentSettings) {
       const changed = quickReadKey(settings.quickRead) !== quickReadKey(next.quickRead); settings = next;
+      state.useVideoSummary = next.quickRead.useVideoSummary;
       if (changed) { if (state.analyzing) cancel(); state.result = null; }
       update(true,true); maybeAuto();
     },

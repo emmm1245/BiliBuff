@@ -9,14 +9,14 @@ const mocks = vi.hoisted(() => ({
     runtime: { id: 'test', getURL: () => 'chrome-extension://test/options.html', onMessage: { addListener: vi.fn() }, openOptionsPage: vi.fn() },
     tabs: { query: vi.fn(), sendMessage: vi.fn(), create: vi.fn() }, action: { onClicked: { addListener: vi.fn() } }, downloads: { onChanged: { addListener: vi.fn() } } },
   reviewer: { request: vi.fn(), invalidate: vi.fn(), error: () => '' },
-  mergeEvents: vi.fn(), samples: vi.fn(),
+  mergeEvents: vi.fn(), allEvents: vi.fn(),
   requestSuggestions: vi.fn(),
 }));
 vi.mock('wxt/browser', () => ({ browser: mocks.browser }));
 vi.mock('wxt/utils/define-background', () => ({ defineBackground: (main: () => void) => ({ main }) }));
 vi.mock('../src/review', () => ({ createReviewer: () => mocks.reviewer }));
 vi.mock('../src/tags', () => ({ requestTags: vi.fn() }));
-vi.mock('../src/database', () => ({ allEvents: async () => [], counts: async () => ({ watched: 0, blocked: 0, highlight: 0 }), samples: mocks.samples, mergeEvents: mocks.mergeEvents }));
+vi.mock('../src/database', () => ({ allEvents: mocks.allEvents, counts: async () => ({ watched: 0, blocked: 0, highlight: 0 }), mergeEvents: mocks.mergeEvents }));
 vi.mock('../src/search', () => ({ requestSuggestions: mocks.requestSuggestions }));
 import entry from '../entrypoints/background';
 
@@ -30,7 +30,7 @@ beforeEach(() => {
   mocks.browser.storage.local.set.mockImplementation(async value => { preferences = structuredClone(value.preferences); });
   mocks.browser.tabs.query.mockResolvedValue([{ id: 1 }]);
   mocks.browser.tabs.sendMessage.mockResolvedValue(undefined);
-  mocks.samples.mockResolvedValue([]);
+  mocks.allEvents.mockResolvedValue([]);
   mocks.browser.runtime.onMessage.addListener.mockImplementation(value => { listener = value; });
   entry.main();
 });
@@ -64,6 +64,17 @@ test('主页联想请求只转交搜索词，不读写偏好或调用 AI', async
   expect(mocks.reviewer.invalidate).not.toHaveBeenCalled();
 });
 
+test.each([false,true])('AI推荐强制网页使用留白，关闭后恢复原偏好 %s', async homeSearch => {
+  preferences.settings.homeSearch = homeSearch;
+  preferences.settings.browse.enabled = true;
+  expect(await request({ type: 'rules' },'https://www.bilibili.com/')).toMatchObject({ ok: true,value: { homeSearch: true,browse: { enabled: true } } });
+  expect(preferences.settings.homeSearch).toBe(homeSearch);
+  expect(await request({ type: 'snapshot' })).toMatchObject({ ok: true,value: { preferences: { settings: { homeSearch } } } });
+  preferences.settings.browse.enabled = false;
+  expect(await request({ type: 'rules' },'https://www.bilibili.com/')).toMatchObject({ ok: true,value: { homeSearch,browse: { enabled: false } } });
+  expect(mocks.browser.storage.local.set).not.toHaveBeenCalled();
+});
+
 test('网页只读取独立主题偏好，主题变更只广播外观，不使规则和复核失效', async () => {
   const savedPreferences = structuredClone(preferences);
   mocks.browser.storage.local.get.mockImplementation(async key => key === THEME_KEY ? { [THEME_KEY]: 'dark' } : { preferences: structuredClone(preferences) });
@@ -80,15 +91,41 @@ test('网页只读取独立主题偏好，主题变更只广播外观，不使�
   expect(mocks.browser.tabs.sendMessage).not.toHaveBeenCalled();
 });
 
-test.each([[25, 225], [1000, 2265]])('屏蔽目标为 %i 时后台查询 %i 条候选，不影响观看样本查询', async (target, candidateCount) => {
+test.each([25, 1000])('屏蔽目标为 %i 时保留屏蔽抽样数量', async target => {
   preferences.settings.minBlocked = target;
   const records: VideoEvent[] = Array.from({ length: 30 }, (_, i) => ({ kind: 'blocked', bvid: `BVsample${i}`, title: '矩阵运算', tags: null, at: i, reason: '' }));
-  mocks.samples.mockImplementation(async kind => kind === 'blocked' ? records : []);
+  mocks.allEvents.mockResolvedValue(records);
   const reply = await request({ type: 'samples' });
   expect(reply.ok).toBe(true);
-  expect(mocks.samples).toHaveBeenCalledWith('watched');
-  expect(mocks.samples).toHaveBeenCalledWith('blocked', candidateCount);
   expect((reply.value as { blocked: VideoEvent[] }).blocked).toHaveLength(Math.min(target, records.length));
+});
+
+test('自动选量按传入数量查询两类样本，保留手动设置', async () => {
+  const previous = structuredClone(preferences.settings);
+  const records: VideoEvent[] = Array.from({ length: 30 }, (_, i) => ({ kind: 'watched', bvid: `BVwatched${i}`, title: '数学课程', tags: [], at: i, reason: '' }));
+  mocks.allEvents.mockResolvedValue([...records, ...records.map(record => ({ ...record, kind: 'blocked' as const, bvid: `BVblocked${record.at}` }))]);
+  const reply = await request({ type: 'samples', counts: { watched: 12, blocked: 25 } });
+  expect(reply).toMatchObject({ ok: true });
+  expect((reply.value as { watched: VideoEvent[] }).watched).toHaveLength(12);
+  expect((reply.value as { blocked: VideoEvent[] }).blocked).toHaveLength(25);
+  expect(preferences.settings).toEqual(previous);
+});
+
+test('分析先排除全库屏蔽记录再截取观看样本，素材总数与历史统计独立', async () => {
+  const records: VideoEvent[] = [
+    { kind: 'watched', bvid: 'BVoverlap', title: '重叠', tags: [], at: 300, reason: '' },
+    { kind: 'watched', bvid: 'BVkeep', title: '保留', tags: [], at: 200, reason: '' },
+    { kind: 'blocked', bvid: 'BVoverlap', title: '重叠', tags: [], at: 1, reason: 'AI屏蔽' },
+    { kind: 'highlight', bvid: 'BVoverlap', title: '重叠', tags: [], at: 0, reason: '' },
+  ];
+  const original = structuredClone(records);
+  mocks.allEvents.mockResolvedValue(records);
+  expect(await request({ type: 'samples', counts: { watched: 1, blocked: 0 } })).toMatchObject({ ok: true,
+    value: { watched: [records[1]], blocked: [] } });
+  expect(await request({ type: 'snapshot' })).toMatchObject({ ok: true,
+    value: { counts: { watched: 0, blocked: 0, highlight: 0 }, sampleCounts: { watched: 1, blocked: 1 } } });
+  expect(records).toEqual(original);
+  expect(mocks.mergeEvents).not.toHaveBeenCalled();
 });
 
 test('后台转发卡片总时长，旧消息未提供时长时保留未知', async () => {
@@ -224,4 +261,14 @@ test('网页密度选择持久保存到统一设置，后台重建后恢复且�
   expect(preferences.decisionApiKey).toBe(before.decisionApiKey); expect(preferences.revision).toBe(before.revision+1);
   entry.main();
   expect((await request({ type: 'rules' },'https://www.bilibili.com/video/BVtest')).value).toMatchObject({ videoAssistant: { chapterDensity: 'concise' } });
+});
+
+test('速读总结背景勾选持久保存，后台重建仍记忆且保留其他设置', async () => {
+  const before = structuredClone(preferences);
+  expect(await request({ type: 'comments-context', enabled: true },'https://www.bilibili.com/video/BVtest')).toEqual({ ok: true, value: true });
+  expect(preferences.settings.quickRead).toEqual({ ...before.settings.quickRead, useVideoSummary: true });
+  expect(preferences.settings.videoAssistant).toEqual(before.settings.videoAssistant);
+  expect(preferences.revision).toBe(before.revision+1);
+  entry.main();
+  expect((await request({ type: 'rules' },'https://www.bilibili.com/video/BVtest')).value).toMatchObject({ quickRead: { useVideoSummary: true } });
 });

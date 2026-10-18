@@ -91,3 +91,21 @@ test('焦点移出整个搜索区时仍会收起', async () => {
   await Promise.resolve();
   expect(home.classList.contains('search-active')).toBe(false);
 });
+
+test('点击下方推荐时搜索已收起，不重置滚动位置或移动视频链接', () => {
+  const { home } = setup();
+  home.classList.add('has-browse'); home.scrollTop = 450;
+  document.dispatchEvent(new Event('pointerdown',{ bubbles: true }));
+  expect(home.scrollTop).toBe(450);
+});
+
+test('有推荐时收起搜索仍保留滚动位置，纯搜索首页保持原有归位行为', () => {
+  const { home,input } = setup();
+  home.classList.add('has-browse'); input.focus(); home.scrollTop = 450;
+  document.dispatchEvent(new Event('pointerdown',{ bubbles: true }));
+  expect(home.classList.contains('search-active')).toBe(false);
+  expect(home.scrollTop).toBe(450);
+  home.classList.remove('has-browse'); home.scrollTop = 450;
+  document.dispatchEvent(new Event('pointerdown',{ bubbles: true }));
+  expect(home.scrollTop).toBe(0);
+});

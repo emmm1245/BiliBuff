@@ -1,13 +1,16 @@
-// 等待页面加载及普通、列表播放页节点接管完成后启动过滤和计时，并在扩展重载时清理。
+// 首页提前保留骨架，页面加载及播放页节点接管完成后启动过滤，扩展重载时统一清理。
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { send } from '../src/client';
 import { startContent } from '../src/content';
 import { isListPlayback } from '../src/core';
+import { holdHomeSkeleton } from '../src/filter/home-skeleton';
 
 export default defineContentScript({
   matches: ['https://www.bilibili.com/*'],
-  runAt: 'document_end',
+  runAt: 'document_start',
   async main(ctx) {
+    const releaseSkeleton = holdHomeSkeleton();
+    ctx.onInvalidated(releaseSkeleton);
     // 过早插入遮罩会破坏播放页原有节点的接管，导致导航重复挂载后清空。
     if (document.readyState !== 'complete') {
       await new Promise<void>(resolve => {
@@ -32,9 +35,14 @@ export default defineContentScript({
       });
     }
     if (ctx.isInvalid) return;
-    const settings = await send({ type: 'rules' });
-    if (ctx.isInvalid) return;
-    const stop = startContent(settings);
-    ctx.onInvalidated(stop);
+    try {
+      const settings = await send({ type: 'rules' });
+      if (ctx.isInvalid) return;
+      const stop = startContent(settings);
+      ctx.onInvalidated(stop);
+    } catch (error) {
+      releaseSkeleton();
+      throw error;
+    }
   },
 });
