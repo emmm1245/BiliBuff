@@ -83,8 +83,10 @@ export type Message =
   | { type: 'record'; event: VideoEvent }
   | { type: 'snapshot' }
   | { type: 'debug-state' }
+  | { type: 'debug-list' }
   | { type: 'debug-toggle'; enabled: boolean }
-  | { type: 'debug-export' }
+  | { type: 'debug-export'; operationId?: string }
+  | { type: 'debug-detail'; id: string }
   | { type: 'debug-clear' }
   | { type: 'save'; settings: Settings; revision: number; apiKey?: string; providerKeys?: Record<string, string>; decisionApiKey?: string }
   | { type: 'plan'; plan: string }

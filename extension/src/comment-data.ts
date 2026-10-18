@@ -45,7 +45,7 @@ export function quickReadInput(source: VideoCommentsSource, comments: CommentRec
     return missing.get(id)!;
   };
   return { references, content: JSON.stringify({ title: source.title, collected: total, selected: comments.length, collectionComplete: complete, expected,
-    ...(videoSummary ? { videoSummary } : {}),
+    ...(videoSummary ? { videoSummary: { summary: videoSummary.summary, points: videoSummary.points } } : {}),
     columns: ['id','root','parent','likes','text'],
     comments: comments.map((comment,index) => [index+1,reference(comment.root),reference(comment.parent),comment.likes,comment.text]) }) };
 }

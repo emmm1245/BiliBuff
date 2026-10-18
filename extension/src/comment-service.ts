@@ -10,6 +10,7 @@ export { parseQuickRead } from './comments/results';
 export { commentJSON, commentPage } from './comments/api';
 import type { CommentMessage, QuickReadProgress, QuickReadResult } from './comment-types';
 import type { Preferences } from './types';
+import { beginOperation, bindTraceSignal, failureSummary } from './platform/diagnostics';
 
 export function createCommentService(preferences: () => Promise<Preferences>) {
   const requests = new Map<string, AbortController>();
@@ -26,8 +27,11 @@ export function createCommentService(preferences: () => Promise<Preferences>) {
     }
     const controller = new AbortController(); requests.set(message.requestId, controller);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(240000)]);
+    const operationTask = beginOperation('评论速读', '分析已采集的评论');
     try {
-      const prefs = await preferences(), options = prefs.settings.quickRead;
+      const [prefs, operation] = await Promise.all([preferences(), operationTask]);
+      bindTraceSignal(signal, operation.id);
+      const options = prefs.settings.quickRead;
       signal.throwIfAborted();
       if (!/^BV\w+$/.test(message.source.bvid) || !Array.isArray(message.comments) || !message.comments.length || message.comments.length > options.limit ||
           message.comments.some(comment => !/^\d+$/.test(comment.id) || typeof comment.text !== 'string')) throw new Error('待分析的评论数据或数量不正确，请重新采集。');
@@ -63,8 +67,13 @@ export function createCommentService(preferences: () => Promise<Preferences>) {
       const latest = await preferences();
       if (quickReadKey(latest.settings.quickRead) !== result.key) throw new Error('速读设置已改变，请使用新设置重新分析。');
       await results.save(result);
+      await operation.step('速读结果已保存', 'info', { comments: message.comments.length, complete: message.complete !== false });
+      await operation.finish('success', message.complete === false ? '部分评论速读完成' : '评论速读完成');
       return result;
     } catch (error) {
+      const operation = await operationTask;
+      if (!controller.signal.aborted) await operation.step(failureSummary(error), 'error');
+      await operation.finish(controller.signal.aborted ? 'cancelled' : 'error', controller.signal.aborted ? '速读已取消' : signal.aborted ? '速读超时' : '速读分析或结果保存失败');
       if (controller.signal.aborted) throw new Error('已取消速读。');
       if (signal.aborted) throw new Error('模型请求超时，请稍后手动重试。');
       if (error instanceof Error && error.message.includes('输出上限')) throw new Error('模型输出达到上限，结果被截断；请调低推荐评论数量后重试。');

@@ -5,6 +5,7 @@ export function createBrowseSources(signal: AbortSignal, logs: BrowseSourceAttem
   let count = 0;
   return {
     get remaining() { return 24-count; },
+    available(family: string) { return count < 24 && (cooldowns.get(family) ?? 0) <= Date.now(); },
     async collect(source: string, family: string, work: () => Promise<BrowseVideo[]>) {
       if ((cooldowns.get(family) ?? 0) > Date.now()) { logs.push({ source,attempt: 0,count: 0,kind: 'cooldown' }); return []; }
       if (count >= 24) { logs.push({ source,attempt: 0,count: 0,kind: 'budget' }); return []; }

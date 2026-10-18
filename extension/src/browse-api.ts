@@ -3,7 +3,9 @@ import { requestTags } from './tags';
 import { cachedTags, saveTags } from './database';
 import { subtitleResource } from './video-api';
 import type { BrowseEvidence, BrowseVideo } from './browse-types';
-import { BrowseRequestError, type BrowseNetwork } from './browse-network';
+import { BrowseRequestError, createBrowseNetwork, type BrowseNetwork } from './browse-network';
+import { themeTags } from './tag-data';
+import { biliClient } from './bili-client';
 
 interface RawVideo {
   bvid?: string; title?: string; author?: string; mid?: number; owner?: { name: string; mid: number };
@@ -50,8 +52,8 @@ export async function browseHome(signal: AbortSignal, network?: BrowseNetwork) {
   return videos(data.item,'home');
 }
 export async function browseSearch(keyword: string, order: 'totalrank' | 'pubdate', page: number, signal: AbortSignal, network?: BrowseNetwork) {
-  const params = new URLSearchParams({ search_type: 'video', keyword, order, page: String(page) });
-  const data = await json<{ result: RawVideo[] }>(`/x/web-interface/search/type?${params}`,signal,network);
+  const client = network ?? createBrowseNetwork(signal,[],new Map());
+  const data = await client.search<{ result: RawVideo[] }>({ search_type: 'video',keyword,order,page: String(page) });
   if (!Array.isArray(data?.result)) throw new BrowseRequestError('搜索响应缺少视频列表。','invalid');
   return videos(data.result,'search');
 }
@@ -69,10 +71,12 @@ export async function browseEvidence(video: BrowseVideo, signal: AbortSignal, ne
   // 标签失败不应丢弃仍有完整简介和目录的视频。
   let tags: string[];
   if (network) {
-    const cached = await cachedTags(video.bvid).catch(() => null);
-    tags = cached ? cached.tags : await network.data<{ tag_name: string }[]>(`/x/tag/archive/tags?bvid=${video.bvid}`).then(async items => {
-      const names = items.map(item => item.tag_name);
-      await saveTags(video.bvid,names).catch(() => {});
+    const path = `/x/web-interface/view/detail/tag?bvid=${video.bvid}`;
+    const cached = await cachedTags(video.bvid).catch(async () => { await biliClient.note(path,'cache'); return null; });
+    tags = cached ? cached.tags : await network.data<unknown>(path).then(async items => {
+      let names: string[];
+      try { names = themeTags(items); } catch (error) { await biliClient.note(path,'invalid'); throw error; }
+      await saveTags(video.bvid,names).catch(() => biliClient.note(path,'cache'));
       return names;
     }).catch(() => video.tags);
   } else tags = await new Promise<string[]>((resolve,reject) => {

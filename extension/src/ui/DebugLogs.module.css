@@ -1,0 +1,19 @@
+/* 为诊断筛选、操作时间线和受限滚动的原始日志提供自适应样式。 */
+.filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.filters label { display: grid; gap: 6px; flex: 1 1 120px; font-size: 13px; color: var(--muted); }
+.filters label:last-child { flex: 2 1 200px; }
+.filters input, .filters select { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--field); font: inherit; }
+.operation { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.operation > summary { cursor: pointer; padding: 12px 14px; }
+.operation > summary strong { display: block; margin-top: 6px; font-size: 14px; font-weight: 500; }
+.meta { display: inline-flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 12px; }
+.meta [data-level=error] { color: var(--pink); font-weight: 600; }
+.meta [data-level=warn] { color: var(--accent); font-weight: 600; }
+.body { padding: 0 14px 14px; }
+.body p { margin: 10px 0; }
+.steps { padding-left: 20px; }
+.steps li { margin: 12px 0; }
+.steps li > span { display: block; }
+.body pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; border-radius: 6px; background: var(--field); font-size: 12px; }
+.raw { margin: 12px 0; }
+.raw > summary { cursor: pointer; }

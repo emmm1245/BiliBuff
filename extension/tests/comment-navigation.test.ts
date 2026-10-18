@@ -2,11 +2,20 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { jumpToComment } from '../src/comment-navigation';
 
-let attributes: Map<string,string>, target: { scrollIntoView: ReturnType<typeof vi.fn> } | null, draft: string;
+function createTarget() {
+  const styles = new Map<string,{ value: string; priority: string }>();
+  return { scrollIntoView: vi.fn(), style: {
+    getPropertyValue: (name: string) => styles.get(name)?.value ?? '',
+    getPropertyPriority: (name: string) => styles.get(name)?.priority ?? '',
+    setProperty: (name: string, value: string, priority = '') => { styles.set(name,{ value, priority }); },
+    removeProperty: (name: string) => { styles.delete(name); },
+  } };
+}
+let attributes: Map<string,string>, target: ReturnType<typeof createTarget> | null, draft: string;
 let host: { shadowRoot: object; isConnected: boolean; getAttribute: ReturnType<typeof vi.fn>; setAttribute: ReturnType<typeof vi.fn>; removeAttribute: ReturnType<typeof vi.fn> };
 beforeEach(() => {
   vi.useFakeTimers(); attributes = new Map([['data-params','1,123'],['lazy-load','true']]); draft = '';
-  target = { scrollIntoView: vi.fn() };
+  target = createTarget();
   const root = {
     querySelectorAll: (selector: string) => selector === '*' ? [] : draft ? [{ textContent: draft }] : [],
     querySelector: () => attributes.get('seek-id') && attributes.get('data-params') === '1,123' ? target : null,
@@ -29,6 +38,25 @@ test('输入框有未发送内容时保持组件和草稿不动', async () => {
   draft = '还没发出去的评论';
   await expect(jumpToComment('456',new AbortController().signal)).rejects.toThrow('未发送');
   expect(host.setAttribute).not.toHaveBeenCalled();
+});
+
+test('连续定位时清除上一条光效并恢复原样式，只高亮当前评论', async () => {
+  const previous = target!;
+  previous.style.setProperty('box-shadow','0 1px 2px black','important');
+  previous.style.setProperty('color','red');
+  const first = jumpToComment('456',new AbortController().signal);
+  await vi.advanceTimersByTimeAsync(600); await first;
+  expect(previous.style.getPropertyValue('outline')).not.toBe('');
+  expect(previous.style.getPropertyValue('box-shadow')).not.toBe('0 1px 2px black');
+  target = createTarget();
+  const second = jumpToComment('789',new AbortController().signal);
+  expect(previous.style.getPropertyValue('outline')).toBe('');
+  expect(previous.style.getPropertyValue('box-shadow')).toBe('0 1px 2px black');
+  expect(previous.style.getPropertyPriority('box-shadow')).toBe('important');
+  expect(previous.style.getPropertyValue('color')).toBe('red');
+  await vi.advanceTimersByTimeAsync(600); await second;
+  expect(target.style.getPropertyValue('outline')).not.toBe('');
+  expect(target.style.getPropertyValue('box-shadow')).not.toBe('');
 });
 test('首次清空期间取消也恢复评论对象，后续定位仍可执行', async () => {
   const controller = new AbortController(), task = jumpToComment('456',controller.signal);

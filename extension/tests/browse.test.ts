@@ -13,7 +13,7 @@ vi.mock('wxt/browser',() => ({ browser: { storage: { local: { get: mocks.get, se
 vi.mock('../src/ai-request',() => ({ requestAI: mocks.ai }));
 vi.mock('../src/database',() => ({ samples: mocks.samples }));
 vi.mock('../src/browse-api',() => ({ browseHome: mocks.home, browseSearch: mocks.search, browseRelated: mocks.related, browseEvidence: mocks.evidence }));
-import { browseContext, mergeBrowseCandidates, browsePicks, rankBrowsePicks, resolveBrowseIds, selectBrowsePicks } from '../src/browse-ranking';
+import { browseContext, mergeBrowseCandidates, browsePicks, inspectBrowseFacts, rankBrowsePicks, resolveBrowseIds, selectBrowsePicks } from '../src/browse-ranking';
 import { BROWSE_KEY, clearBrowseLogs, readBrowseMemory, updateBrowseMemory } from '../src/browse-store';
 import { createBrowseService } from '../src/browse-service';
 import { BrowseHomeView } from '../src/browse-home';
@@ -73,6 +73,61 @@ test('交错融合来源、合并同视频，排除已推荐、看过和明确�
   expect(candidates.map(item => item.bvid)).toEqual(['BVsame','BVnew']);
   expect(candidates[0]!.sources).toEqual(['home','search']);
   expect(() => resolveBrowseIds(['v9'],candidates)).toThrow('不存在');
+});
+
+test('清空选片缓存保留赞踩、日志、冷却和其他存储，下次重新提炼计划', async () => {
+  const browse = service();
+  await run(browse);
+  await browse.handle({ type: 'browse-feedback',bvid: 'BVsearch',vote: 1 });
+  await updateBrowseMemory(memory => ({ ...memory,pool: [{ video: video('pool'),topic: '矩阵',checkedAt: Date.now() }],
+    sourceCooldowns: { home: Date.now()+600000 } }));
+  saved.preferences = structuredClone(prefs);
+  saved.tags = { BVsearch: ['线性代数'] };
+  const before = structuredClone(saved), memory = await readBrowseMemory();
+  expect(memory.searches?.length).toBeGreaterThan(0);
+  const calls = mocks.ai.mock.calls.length;
+  await browse.handle({ type: 'browse-cache-clear' });
+  expect(await readBrowseMemory()).toEqual({ context: '',items: [],updatedAt: 0,round: 0,queries: [],seen: [],pool: [],searches: [],
+    feedback: memory.feedback,logs: memory.logs,sourceCooldowns: memory.sourceCooldowns });
+  expect(saved.preferences).toEqual(before.preferences); expect(saved.tags).toEqual(before.tags);
+  expect(mocks.ai).toHaveBeenCalledTimes(calls);
+  const state = await browse.handle({ type: 'browse-state' }) as BrowseState;
+  expect(state.items).toEqual([]); expect(state.busy).toBe(false); expect(state.error).toBe('');
+  outputs = [profile,searchPlan(),{ ids: ['v0'] },{ choices: [fact('v0')] }];
+  await run(browse);
+  expect(JSON.parse(mocks.ai.mock.calls[calls]![2].messages[1].content)).toEqual({ plan: prefs.plan });
+  expect((await readBrowseMemory()).items.map(item => item.bvid)).toContain('BVsearch');
+});
+
+test('清空先取消并等待旧任务收尾，同时请求换批不会恢复旧缓存', async () => {
+  const browse = service();
+  let finish!: () => void;
+  let signal!: AbortSignal;
+  mocks.ai.mockImplementationOnce(async (_prefs,_selection,_body,currentSignal,consume) => {
+    signal = currentSignal;
+    await new Promise<void>(resolve => { finish = resolve; });
+    return consume(profile);
+  });
+  await browse.handle({ type: 'browse-refresh' });
+  await vi.waitFor(() => expect(mocks.ai).toHaveBeenCalledOnce());
+  const clear = browse.handle({ type: 'browse-cache-clear' });
+  expect(signal.aborted).toBe(true);
+  const refresh = browse.handle({ type: 'browse-refresh' });
+  const secondClear = browse.handle({ type: 'browse-cache-clear' });
+  finish();
+  await Promise.all([clear,refresh,secondClear]);
+  const memory = await readBrowseMemory();
+  expect(memory.items).toEqual([]); expect(memory.seen).toEqual([]); expect(memory.searches).toEqual([]);
+  expect(memory).not.toHaveProperty('pending'); expect(memory).not.toHaveProperty('profile');
+  expect(memory.logs).toHaveLength(1);
+  expect(mocks.ai).toHaveBeenCalledOnce(); expect(mocks.home).not.toHaveBeenCalled();
+  expect((await browse.handle({ type: 'browse-state' }) as BrowseState).error).toBe('');
+});
+
+test('清空选片缓存仅允许扩展设置页调用', () => {
+  expect(parseMessage({ type: 'browse-cache-clear' })).toEqual({ type: 'browse-cache-clear' });
+  expect(mayAccess('browse-cache-clear',{ id: 'test',url: 'options' },'test','options')).toBe(true);
+  expect(mayAccess('browse-cache-clear',{ id: 'test',url: 'https://www.bilibili.com/',frameId: 0 },'test','options')).toBe(false);
 });
 test('只有明确相关的真实候选会展示，限制同作者与同主题堆积', () => {
   const candidates = Array.from({ length: 7 },(_,i) => ({ ...video(String(i)),authorId: i < 3 ? 'same' : String(i) }));
@@ -162,6 +217,14 @@ test('选片期间新增的赞踩不会被新批次覆盖', async () => {
   expect((await readBrowseMemory()).feedback).toMatchObject([{ video: { bvid: 'BVold' },vote: -1 }]);
   expect((await readBrowseMemory()).items[0]!.bvid).toBe('BVsearch');
 });
+test.each([false,true])('选片期间保留可用的操作按钮，不增加独立取消按钮，配置就绪：%s', ready => {
+  const state: BrowseState = { items: [],busy: true,ready,error: '',status: '',updatedAt: 0 };
+  const html = renderToStaticMarkup(createElement(BrowseHomeView,{ state,actions: { refresh: vi.fn(),cancel: vi.fn(),settings: vi.fn(),vote: vi.fn() } }));
+  expect(html).toContain('aria-busy="true"');
+  expect(html.match(/<button\b/g)).toHaveLength(2);
+  expect(html).not.toContain('disabled=');
+});
+
 test('卡片只提供赞踩，独立于视频链接，标题按文本转义', () => {
   const state: BrowseState = { items: [{ ...video('ui'),title: '<script>恶意标题</script>',vote: 1 }],busy: false,ready: true,error: '',status: '',updatedAt: 1 };
   const html = renderToStaticMarkup(createElement(BrowseHomeView,{ state,actions: { refresh: vi.fn(),cancel: vi.fn(),settings: vi.fn(),vote: vi.fn() } }));
@@ -369,5 +432,96 @@ test('范围补充在全局排序期间改变也不发布迟到结果', async ()
   await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
   prefs.settings.browse.scopeNote = '只看实际演示'; browse.invalidate(prefs); finish(); await settled(browse);
   expect((await readBrowseMemory()).items.map(video => video.bvid)).toEqual(['BVold']);
+});
+
+test('搜索412后停止规划，冷却中换批只尝试一次健康来源且保留旧推荐', async () => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile,items: [video('old')],updatedAt: 1 };
+  let generation = 0;
+  mocks.home.mockImplementation(async () => [video(`new${generation++}`,'home')]);
+  mocks.search.mockRejectedValue(new Error('HTTP 412'));
+  mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
+    const task = body.messages[0].content;
+    return consume(task.includes('搜索词') ? { searches: [searchPlan('主题一').searches[0],searchPlan('主题二').searches[0]] } : { ids: [] });
+  });
+  const browse = service(); await run(browse); const result = await run(browse);
+  expect(mocks.ai.mock.calls.filter(call => call[2].messages[0].content.includes('搜索词'))).toHaveLength(1);
+  expect(mocks.ai).toHaveBeenCalledTimes(3); expect(mocks.home).toHaveBeenCalledTimes(2); expect(mocks.search).toHaveBeenCalledOnce();
+  expect(result.items.map(item => item.bvid)).toEqual(['BVold']);
+  const memory = await readBrowseMemory(), logs = memory.logs!;
+  expect(memory.searches).toHaveLength(1);
+  expect(logs[0]?.skippedQueries).toContainEqual({ query: '主题二',reason: 'cooldown' });
+  expect(logs[1]).toMatchObject({ plannedQueries: 0,searchPlanningSkipped: 1,checked: 0,published: 0,stopReason: 'no-qualified-progress' });
+  expect(logs[1]?.sourceCooldowns?.search).toBeGreaterThan(Date.now());
+  await clearBrowseLogs(); await run(service());
+  expect(mocks.search).toHaveBeenCalledOnce();
+  expect(mocks.ai.mock.calls.filter(call => call[2].messages[0].content.includes('搜索词'))).toHaveLength(1);
+});
+
+test('初选未选中内容在同批次不反复发送，按唯一视频记录候选及来源新增', async () => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile };
+  let cycle = 0;
+  mocks.home.mockImplementation(async () => Array.from({ length: 5 },(_,i) => video(String(cycle*3+i),'home')));
+  mocks.search.mockResolvedValue([]);
+  mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
+    if (body.messages[0].content.includes('搜索词')) { cycle++; return consume(searchPlan(`主题${cycle}`)); }
+    return consume({ ids: [] });
+  });
+  await run(service());
+  const evaluated = mocks.ai.mock.calls.filter(call => call[2].messages[0].content.includes('值得核验'))
+    .flatMap(call => JSON.parse(call[2].messages[1].content).candidates.map((item: { title: string }) => item.title));
+  expect(evaluated).toHaveLength(11); expect(new Set(evaluated).size).toBe(11);
+  expect((await readBrowseMemory()).logs?.at(-1)).toMatchObject({ candidates: 11,candidateEvaluations: 11,skippedEvaluated: 4,discovered: 11,sourceAdded: { home: 11,search: 0 } });
+});
+
+test('真实日志重复入口形态只隔离争议编号，不累计重复判断或擅自选择分P', () => {
+  const videos = [0,1,2].map(i => ({ ...video(String(i)),parts: ['第一P','第二P'],
+    chapters: [{ page: 1,cid: 1,title: '第一P',duration: 60 },...(i === 1 ? [{ page: 2,cid: 2,title: '第二P',duration: 600 }] : [])],
+    excerpt: i === 2 ? '' : '第一P字幕',checkedPage: 1,coverage: '第一P' }));
+  // 导出日志2026-10-18T08:08:24.142Z中同一v1重复选择P1与P2，其他编号各一次。
+  const output = { choices: [{ ...fact('v1'),page: 1,evidence: 'content' },{ ...fact('v1'),page: 2 },
+    { ...fact('v0','related'),page: 1,evidence: 'content' },{ ...fact('v2','related'),page: 1,format: 'unknown',evidence: 'insufficient' }] };
+  const result = inspectBrowseFacts(output,videos);
+  expect(result.disputed).toEqual([1]); expect(result.rawCount).toBe(4);
+  expect(result.valid.map(choice => choice.id)).toEqual(['v0','v2']); expect(result.picks).toEqual([]);
+  expect(inspectBrowseFacts({ choices: [fact('v2'),fact('v0'),{ ...fact('v1'),page: 9 },fact('v99')] },videos).picks.map(pick => pick.video.bvid)).toEqual(['BV2','BV0']);
+});
+
+test.each(['success','conflict','failure'])('争议核验仅修正一次并保留独立合格内容：%s', async mode => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile };
+  mocks.home.mockResolvedValue([video('unique','home'),video('disputed','home')]); mocks.search.mockResolvedValue([]);
+  mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
+    const task = body.messages[0].content, input = JSON.parse(body.messages[1].content);
+    if (task.includes('搜索词')) return consume(searchPlan());
+    if (task.includes('值得核验')) return consume({ ids: input.candidates.map((item: { id: string }) => item.id) });
+    if (task.includes('本次仅修正')) {
+      expect(input.candidates).toHaveLength(1); expect(input.candidates[0].title).toBe('线性代数disputed');
+      if (mode === 'failure') throw new Error('修正服务失败');
+      return consume({ choices: mode === 'success' ? [fact('v0','target','修正主题')] : [fact('v0'),fact('v0','unknown')] });
+    }
+    return consume({ choices: [fact('v0','target','独立主题'),fact('v1'),fact('v1','unknown')] });
+  });
+  const result = await run(service());
+  expect(result.items.map(item => item.bvid)).toEqual(mode === 'success' ? ['BVunique','BVdisputed'] : ['BVunique']);
+  expect(result.error).toBe('');
+  const log = (await readBrowseMemory()).logs!.at(-1)!;
+  expect(log).toMatchObject({ checked: 2,validChoices: mode === 'success' ? 2 : 1,disputedCandidates: 1,repairCalls: 1,repairDropped: mode === 'success' ? 0 : 1 });
+  expect(Object.values(log.scopes!).reduce((sum,n) => sum+n,0)).toBe(log.validChoices);
+  expect(mocks.ai.mock.calls.filter(call => call[2].messages[0].content.includes('本次仅修正'))).toHaveLength(1);
+});
+
+test('多个核验组仅一条合格时无需全局排序', async () => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile };
+  mocks.home.mockResolvedValue(Array.from({ length: 7 },(_,i) => video(`single${i}`,'home'))); mocks.search.mockResolvedValue([]);
+  let facts = 0;
+  mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
+    const task = body.messages[0].content, input = JSON.parse(body.messages[1].content);
+    if (task.includes('搜索词')) return consume(searchPlan());
+    if (task.includes('值得核验')) return consume({ ids: input.candidates.map((item: { id: string }) => item.id) });
+    facts++;
+    return consume({ choices: input.candidates.map((item: { id: string }) => fact(item.id,facts === 1 && item.id === 'v0' ? 'target' : 'unknown')) });
+  });
+  const result = await run(service());
+  expect(result.items).toHaveLength(1); expect(facts).toBe(2);
+  expect(mocks.ai.mock.calls.some(call => call[2].messages[0].content.includes('全局排序'))).toBe(false);
 });
 

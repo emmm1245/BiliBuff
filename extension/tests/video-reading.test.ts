@@ -97,6 +97,26 @@ test('章节预览不进入正式缓存，取消后清空且忽略迟到的结�
   delayed.resolve(cache(1)); await tick(); expect(mocks.states.at(-1)?.cache?.chapters).toBeUndefined();
 });
 
+test('总结预览仅作用于当前请求，取消及重新生成清空且忽略旧进度', async () => {
+  const delayed = deferred<VideoCache>(), original = mocks.send.getMockImplementation()!;
+  mocks.send.mockImplementation(message => message.type === 'video-analyze' ? delayed.promise : original(message));
+  startVideoReading(migrateSettings(),controller.signal); await tick();
+  mocks.actions!.analyze('summary'); await tick();
+  const message = mocks.send.mock.calls.find(([value]) => value.type === 'video-analyze')![0];
+  const listener = mocks.listener.mock.calls.at(-1)![0];
+  const progress = { type: 'video-progress', requestId: message.requestId, summary: '', thinking: false,
+    summaryUI: { headline: '当前总结', context: '', blocks: [] } };
+  listener(progress); expect(mocks.states.at(-1)?.summaryPreview?.headline).toBe('当前总结');
+  expect(mocks.states.at(-1)?.cache?.summary).toBeUndefined();
+  listener({ ...progress, status: '下一分段', summaryUI: undefined });
+  expect(mocks.states.at(-1)?.summaryPreview).toBeUndefined();
+  listener(progress); mocks.actions!.cancel(); listener(progress);
+  expect(mocks.states.at(-1)?.summaryPreview).toBeUndefined();
+  mocks.actions!.analyze('summary'); listener(progress);
+  expect(mocks.states.at(-1)?.summaryPreview).toBeUndefined();
+  delayed.resolve(cache(1)); await tick();
+});
+
 
 test('仅开启广告自动跳过不会隐式生成章节或请求模型', async () => {
   const settings = migrateSettings(); settings.videoAssistant.autoSkipAds = true;

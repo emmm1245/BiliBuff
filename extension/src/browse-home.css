@@ -9,6 +9,8 @@
 .browse button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--home-chip-border); border-radius: 8px; padding: 7px 11px; color: var(--home-settings-text); background: var(--home-search-bg); font: 13px/1.4 "Microsoft YaHei", system-ui, sans-serif; cursor: pointer; transition: color .15s, background-color .15s; }
 .browse button:hover { color: #00aeec; background: var(--home-panel-bg); }
 .browse button:disabled { cursor: default; opacity: .5; }
+.browse-spinning { animation: browse-spin 1s linear infinite; }
+@keyframes browse-spin { to { transform: rotate(360deg); } }
 .browse button:focus-visible, .browse a:focus-visible { outline: 2px solid #00aeec; outline-offset: 3px; }
 .browse-status, .browse-error { margin: 0 0 20px; color: var(--home-settings-text); font-size: 13px; }
 .browse-error { color: var(--home-error); }
@@ -31,4 +33,4 @@
 @media (max-width: 1000px) { .browse-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .browse-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 14px; } .browse-mount { width: calc(100% - 36px); } }
 @media (max-width: 480px) { .home.has-browse .search-area { padding-top: 40px; } .browse-heading { gap: 8px; } .browse-heading h2 { font-size: 16px; } .browse-tools { gap: 4px; } .browse button { padding: 7px 8px; } .browse-votes button { padding: 6px; } }
-@media (prefers-reduced-motion: reduce) { .browse button { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .browse button { transition: none; } .browse-spinning { animation: none; } }

@@ -48,6 +48,6 @@ export function prepareBrowseSearches(tasks: BrowseSearchTask[], history: Browse
   return result;
 }
 export function browseSearchSummary(history: BrowseQueryResult[]) {
-  return history.slice(-24).map(({ query,intent,scopeKey,order,page,ok,errorKind,returned,added,filtered,shortlisted,qualified,published }) =>
+  return history.filter(item => item.sent !== false && !['pending','cooldown','budget'].includes(item.errorKind ?? '')).slice(-24).map(({ query,intent,scopeKey,order,page,ok,errorKind,returned,added,filtered,shortlisted,qualified,published }) =>
     ({ query,intent,scopeKey,order,page,ok,errorKind,returned,added,filtered,shortlisted,qualified,published }));
 }

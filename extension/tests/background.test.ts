@@ -1,12 +1,14 @@
 // 验证后台采样、复核配置、消息权限及多服务密钥的保存与备份迁移。
+import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { migrateSettings } from '../src/core';
 import { THEME_KEY } from '../src/theme';
 import type { Backup, Message, Preferences, VideoEvent } from '../src/types';
+import { allOperations, beginOperation, clearOperations } from '../src/platform/diagnostics';
 
 const mocks = vi.hoisted(() => ({
   browser: { storage: { local: { setAccessLevel: vi.fn(), get: vi.fn(), set: vi.fn() }, onChanged: { addListener: vi.fn() } },
-    runtime: { id: 'test', getURL: () => 'chrome-extension://test/options.html', onMessage: { addListener: vi.fn() }, openOptionsPage: vi.fn() },
+    runtime: { id: 'test', getURL: () => 'chrome-extension://test/options.html', getManifest: () => ({ version: '1.0.0' }), onMessage: { addListener: vi.fn() }, openOptionsPage: vi.fn() },
     tabs: { query: vi.fn(), sendMessage: vi.fn(), create: vi.fn() }, action: { onClicked: { addListener: vi.fn() } }, downloads: { onChanged: { addListener: vi.fn() } } },
   reviewer: { request: vi.fn(), invalidate: vi.fn(), error: () => '' },
   mergeEvents: vi.fn(), allEvents: vi.fn(),
@@ -18,6 +20,7 @@ vi.mock('../src/review', () => ({ createReviewer: () => mocks.reviewer }));
 vi.mock('../src/tags', () => ({ requestTags: vi.fn() }));
 vi.mock('../src/database', () => ({ allEvents: mocks.allEvents, counts: async () => ({ watched: 0, blocked: 0, highlight: 0 }), mergeEvents: mocks.mergeEvents }));
 vi.mock('../src/search', () => ({ requestSuggestions: mocks.requestSuggestions }));
+vi.mock('../src/ai-debug',async importOriginal => ({ ...await importOriginal<typeof import('../src/ai-debug')>(),allDebugLogs: async () => [],clearDebugLogs: async () => {} }));
 import entry from '../entrypoints/background';
 
 let preferences: Preferences;
@@ -27,7 +30,7 @@ beforeEach(() => {
   preferences = { schemaVersion: 1, revision: 0, settings: migrateSettings(), plan: '', apiKey: '', decisionApiKey: 'kept-key', result: null };
   mocks.browser.storage.local.setAccessLevel.mockResolvedValue(undefined);
   mocks.browser.storage.local.get.mockImplementation(async () => ({ preferences: structuredClone(preferences) }));
-  mocks.browser.storage.local.set.mockImplementation(async value => { preferences = structuredClone(value.preferences); });
+  mocks.browser.storage.local.set.mockImplementation(async value => { if ('preferences' in value) preferences = structuredClone(value.preferences); });
   mocks.browser.tabs.query.mockResolvedValue([{ id: 1 }]);
   mocks.browser.tabs.sendMessage.mockResolvedValue(undefined);
   mocks.allEvents.mockResolvedValue([]);
@@ -38,6 +41,37 @@ afterEach(() => vi.unstubAllGlobals());
 async function request(message: Message, url = 'chrome-extension://test/options.html') {
   return new Promise<{ ok: boolean; value?: unknown; error?: string }>(resolve => listener(message, { id: 'test', url, frameId: 0 }, resolve));
 }
+
+test('调试导出包含B站请求诊断，清除记录保留来源冷却且不修改偏好',async () => {
+  const { biliClient } = await import('../src/bili-client');
+  const saved = structuredClone(preferences);
+  await biliClient.record({ at: Date.now(),source: 'tags',path: '/x/web-interface/view/detail/tag',sent: true,durationMs: 2,http: 412,errorKind: 'limited' });
+  const exported = await request({ type: 'debug-export' });
+  expect(exported).toMatchObject({ ok: true,value: { biliNetwork: { logs: [expect.objectContaining({ http: 412,errorKind: 'limited' })] } } });
+  expect(await request({ type: 'debug-clear' })).toMatchObject({ ok: true });
+  expect((await biliClient.diagnostics()).logs).toEqual([]);
+  expect(biliClient.cooldown('tags')).toBeGreaterThan(Date.now()); expect(preferences).toEqual(saved);
+});
+
+test('单次操作导出只包含所属任务和关联请求，不混入其他任务或冷却状态', async () => {
+  await clearOperations();
+  const parent = await beginOperation('选片', '开始');
+  const child = await beginOperation('模型', '请求', parent.id);
+  const other = await beginOperation('其他', '开始');
+  const { biliClient } = await import('../src/bili-client');
+  await biliClient.clearLogs();
+  await biliClient.record({ operationId: parent.id, at: Date.now(), source: 'detail', path: '/related', sent: true, durationMs: 1 });
+  await biliClient.record({ operationId: other.id, at: Date.now(), source: 'detail', path: '/other', sent: true, durationMs: 1 });
+  const exported = await request({ type: 'debug-export', operationId: parent.id });
+  expect(exported).toMatchObject({ ok: true, value: { version: 2, environment: { extensionVersion: '1.0.0' },
+    operations: expect.arrayContaining([expect.objectContaining({ id: parent.id }), expect.objectContaining({ id: child.id })]),
+    biliNetwork: { logs: [expect.objectContaining({ path: '/related' })], cooldowns: {} } } });
+  expect(JSON.stringify(exported)).not.toContain(other.id);
+  expect(await request({ type: 'debug-list' }, 'https://www.bilibili.com/')).toMatchObject({ ok: false });
+  expect(await request({ type: 'debug-detail', id: child.id }, 'https://www.bilibili.com/')).toMatchObject({ ok: false });
+  expect(await request({ type: 'debug-clear' })).toMatchObject({ ok: true });
+  expect(await allOperations()).toEqual([]);
+});
 
 test('评论流式进度只推送到发起标签页的主框架，断流保留失败响应', async () => {
   preferences.apiKey = 'test';

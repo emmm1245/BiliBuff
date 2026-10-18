@@ -33,7 +33,7 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
   function fail(error: unknown) { state.error = error instanceof Error ? error.message : '视频助手操作失败，请重试。'; update(); }
   function cancel() {
     if (requestId) { void send({ type: 'video-cancel', requestId }).catch(() => {}); requestId = ''; }
-    state.task = null; state.preview = ''; state.chaptersPreview = undefined; state.status = '已取消'; update();
+    state.task = null; state.preview = ''; state.chaptersPreview = undefined; state.summaryPreview = undefined; state.status = '已取消'; update();
   }
   async function activate() {
     const route = videoRoute(location.pathname,location.search);
@@ -67,14 +67,14 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
   async function analyze(task: VideoTask, question?: string) {
     if (!state.cache || state.task || !isCurrent() || (task === 'chapters' && state.source?.nativeChapters?.length)) return;
     const cache = state.cache, epoch = generation, id = crypto.randomUUID(); requestId = id;
-    state.task = task; state.question = question ?? ''; state.error = ''; state.preview = ''; state.chaptersPreview = undefined; state.status = task === 'chapters' ? '正在生成章节…' : task === 'chat' ? '正在回答…' : '正在生成总结…'; update();
+    state.task = task; state.question = question ?? ''; state.error = ''; state.preview = ''; state.chaptersPreview = undefined; state.summaryPreview = undefined; state.status = task === 'chapters' ? '正在生成章节…' : task === 'chat' ? '正在回答…' : '正在生成总结…'; update();
     try {
       const next = await send({ type: 'video-analyze', task, requestId: id, bvid: cache.source.bvid, cid: cache.source.cid, language: cache.language,
         fingerprint: cache.fingerprint, question, ...(task === 'chapters' ? { density: state.chapterDensity } : {}) });
       if (!isCurrent(epoch) || requestId !== id) return;
       state.cache = next; if (next.source.nativeChapters?.length) state.source = next.source; state.status = ''; if (task === 'chat') view.clearQuestion();
     } catch (error) { if (isCurrent(epoch) && requestId === id) fail(error); }
-    finally { if (isCurrent(epoch) && requestId === id) { requestId = ''; state.task = null; state.preview = ''; state.chaptersPreview = undefined; update(); if (!automaticRunning) void runAutomatic(); } }
+    finally { if (isCurrent(epoch) && requestId === id) { requestId = ''; state.task = null; state.preview = ''; state.chaptersPreview = undefined; state.summaryPreview = undefined; update(); if (!automaticRunning) void runAutomatic(); } }
   }
   async function runAutomatic() {
     if (automaticRunning || automaticPaused || !state.cache || !isCurrent()) return;
@@ -133,10 +133,11 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
   const onMessage = (message: VideoProgress | { type: 'theme-changed'; theme: Theme }) => {
     if (message.type === 'theme-changed') { view.theme(message.theme); return; }
     if (message.type !== 'video-progress' || message.requestId !== requestId || !state.task || !isCurrent()) return;
-    if (message.status) { state.status = message.status; state.preview = ''; }
+    if (message.status) { state.status = message.status; state.preview = ''; state.summaryPreview = undefined; }
     if (message.chapters) state.chaptersPreview = message.chapters;
+    if (message.summaryUI) state.summaryPreview = message.summaryUI;
     if (message.summary) state.preview = message.summary;
-    if (message.thinking && !state.preview) state.status = '正在思考…'; update();
+    if (message.thinking && !state.preview && !state.summaryPreview?.headline) state.status = '正在思考…'; update();
   };
   browser.runtime.onMessage.addListener(onMessage);
   const observer = new MutationObserver(() => { if (state.source && isCurrent()) { view.mount(); mountNavigation(); } }); observer.observe(document.body,{ childList: true, subtree: true, attributes: true, attributeFilter: ['data-screen'] });

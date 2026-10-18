@@ -1,6 +1,7 @@
 // 在后台读取B站视频、字幕及媒体地址，只接受已验证的视频编号和本站资源域名。
 import { nativeVideoChapters, subtitleRows } from './video-data.ts';
 import type { MediaChoice, VideoSource } from './video-types';
+import { biliClient, BiliRequestError } from './bili-client';
 
 interface ViewData { aid: number; bvid: string; title: string; pages: { page: number; cid: number; part: string; duration: number }[] }
 interface Track { lan: string; lan_doc: string; subtitle_url: string; ai_status?: number }
@@ -13,11 +14,7 @@ interface PlayData {
 interface Stream { id: number; baseUrl?: string; base_url?: string; backupUrl?: string[]; backup_url?: string[]; codecs: string; codecid?: number; bandwidth: number; mimeType?: string; mime_type?: string }
 const details = new Map<string,{ data: ViewData; at: number }>();
 export async function biliVideoJSON<T>(path: string): Promise<T> {
-  const response = await fetch(`https://api.bilibili.com${path}`,{ credentials: 'include', signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error(`B站读取失败（${response.status}），请稍后重试。`);
-  const json = await response.json();
-  if (json.code !== 0) throw new Error(`B站返回：${json.message || json.code}。请确认已登录且有权观看。`);
-  return json.data as T;
+  return biliClient.json<T>(path);
 }
 export async function videoDetails(bvid: string) {
   if (!/^BV\w+$/.test(bvid)) throw new Error('视频编号无效。');
@@ -78,18 +75,24 @@ export function mediaStreamResource(candidates: string[]) {
 }
 export async function videoMedia(bvid: string, cid: number): Promise<(MediaChoice & { url: string })[]> {
   await confirmedPart(bvid,cid);
-  const base = `/x/player/playurl?bvid=${encodeURIComponent(bvid)}&cid=${cid}&fnver=0`;
-  const results = await Promise.allSettled([biliVideoJSON<PlayData>(`${base}&qn=64&fnval=1&fourk=0`),biliVideoJSON<PlayData>(`${base}&qn=127&fnval=4048&fourk=1`)]);
+  const results: PromiseSettledResult<PlayData>[] = [];
+  for (const mode of [{ qn: '64',fnval: '1',fourk: '0' },{ qn: '127',fnval: '4048',fourk: '1' }]) {
+    try { results.push({ status: 'fulfilled',value: await biliClient.signed<PlayData>('/x/player/wbi/playurl',{ bvid,cid: String(cid),fnver: '0',...mode }) }); }
+    catch (error) {
+      results.push({ status: 'rejected',reason: error });
+      if (error instanceof BiliRequestError && ['limited','verification','cooldown'].includes(error.kind)) break;
+    }
+  }
   const choices: (MediaChoice & { url: string })[] = [];
   const qualityName = (data: PlayData, quality: number) => data.accept_description?.[data.accept_quality?.indexOf(quality) ?? -1] || `清晰度 ${quality}`;
   const combined = results[0];
-  if (combined.status === 'fulfilled' && combined.value.durl?.length === 1 && combined.value.format?.startsWith('mp4')) {
+  if (combined?.status === 'fulfilled' && combined.value.durl?.length === 1 && combined.value.format?.startsWith('mp4')) {
     const data = combined.value, stream = data.durl![0]!;
     const url = mediaStreamResource([stream.url,...(stream.backup_url ?? [])]);
     if (url) choices.push({ id: 'mp4', kind: 'video', combined: true, label: `${qualityName(data,data.quality)} · MP4 · 含声音`, quality: data.quality, codec: 'MP4', extension: 'mp4', size: stream.size, url });
   }
   const dash = results[1];
-  if (dash.status === 'fulfilled' && dash.value.dash) {
+  if (dash?.status === 'fulfilled' && dash.value.dash) {
     const data = dash.value;
     for (const [kind,streams] of [['video',data.dash!.video],['audio',data.dash!.audio]] as const) for (const stream of streams ?? []) {
       const url = mediaStreamResource([stream.baseUrl || stream.base_url || '',...(stream.backupUrl ?? stream.backup_url ?? [])]);
@@ -99,6 +102,10 @@ export async function videoMedia(bvid: string, cid: number): Promise<(MediaChoic
         label: kind === 'video' ? `${qualityName(data,stream.id)} · ${codec.split('.')[0]} · 仅画面` : `${Math.round(stream.bandwidth/1000)} kbps · ${extension.toUpperCase()} 音频`, url });
     }
   }
-  if (!choices.length) throw new Error('未取得可下载的媒体地址，请确认已登录且视频可正常播放。');
+  if (!choices.length) {
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    throw new Error('未取得可下载的媒体地址，请确认已登录且视频可正常播放。');
+  }
   return choices.filter((item,i,list) => list.findIndex(other => other.id === item.id) === i);
 }

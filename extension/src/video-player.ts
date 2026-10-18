@@ -74,7 +74,7 @@ export function createVideoPlayerNavigation(seek: (seconds: number) => void, sig
   function playback(seconds: number) {
     const index = chapters.findIndex(chapter => seconds >= chapter.start && seconds < chapter.end);
     if (index === current) return; current = index;
-    trigger.querySelector('span')!.textContent = `章节 ·${chapters[index]?.title ?? '查看全部'}`;
+    trigger.querySelector('span')!.textContent = chapters[index]?.title ?? '查看全部';
     [...menu.children].forEach((button,i) => button.setAttribute('aria-current',String(i === index)));
   }
   signal.addEventListener('abort',clear,{ once: true });

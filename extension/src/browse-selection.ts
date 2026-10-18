@@ -5,7 +5,7 @@ import { modelParameters } from './core';
 import { matchGroup } from './filter/rules';
 import { samples } from './database';
 import { browseEvidence, browseHome, browseRelated, browseSearch } from './browse-api';
-import { browseContext, browseFactsSchema, browseFactsTask, browseGlobalSchema, browseGlobalTask, browseInstructions, browsePicks, browseProfileSchema, browseProfileTask,
+import { browseContext, browseFactsSchema, browseFactsTask, browseGlobalSchema, browseGlobalTask, browseInstructions, inspectBrowseFacts, browseProfileSchema, browseProfileTask,
   browseShortlistSchema, fallbackBrowseRanking, mergeBrowseCandidates, rankBrowsePicks, resolveBrowseIds, selectBrowsePicks } from './browse-ranking';
 import { browseQueryKey, browseQueryPage, browseSearchPlanSchema, browseSearchSummary, browseSearchTask, prepareBrowseSearches } from './browse-search';
 import { BROWSE_POOL_AGE, browseLogEpoch, readBrowseMemory, updateBrowseMemory } from './browse-store';
@@ -13,13 +13,15 @@ import { createBrowseSources } from './browse-sources';
 import { createBrowseNetwork } from './browse-network';
 import type { BrowseEvidence, BrowsePick, BrowseQueryResult, BrowseRoundLog, BrowseVideo } from './browse-types';
 import type { Preferences } from './types';
+import { bindTraceSignal, recordTraceStep, traceForSignal } from './platform/diagnostics';
 
 export async function selectBrowseBatch(prefs: Preferences, readPreferences: () => Promise<Preferences>, signal: AbortSignal,
   status: (text: string) => void, cooldowns: Map<string,number>) {
   const started = Date.now(), context = browseContext(prefs);
   const logEpoch = browseLogEpoch();
-  const log: BrowseRoundLog = { at: started,durationMs: 0,sources: [],candidates: 0,checked: 0,accepted: 0,published: 0,cached: 0,
-    contextVersion: 2,revision: prefs.revision,requests: [],queries: [],scopes: {},evidence: {},detailed: 0,subtitles: 0,modelCalls: 0,inputTokens: 0,outputTokens: 0,stages: {},plannedQueries: 0,skippedQueries: [] };
+  const log: BrowseRoundLog = { operationId: traceForSignal(signal),at: started,durationMs: 0,sources: [],candidates: 0,checked: 0,accepted: 0,published: 0,cached: 0,
+    contextVersion: 2,revision: prefs.revision,requests: [],queries: [],scopes: {},evidence: {},detailed: 0,subtitles: 0,modelCalls: 0,inputTokens: 0,outputTokens: 0,stages: {},plannedQueries: 0,skippedQueries: [],
+    candidateEvaluations: 0,skippedEvaluated: 0,discovered: 0,sourceAdded: {},rawChoices: 0,validChoices: 0,disputedCandidates: 0,repairCalls: 0,repairDropped: 0,searchPlanningSkipped: 0 };
   const network = createBrowseNetwork(signal,log.requests!,cooldowns);
   let usageCalls = 0;
   const allowed = (video: BrowseVideo) => !matchGroup(video.title,video.tags,prefs.settings.negative,prefs.settings.exactTags) ||
@@ -33,7 +35,7 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
     try {
       return await requestAI(prefs,prefs.settings.browse,{ ...output,stream: true,
         messages: [{ role: 'system',content: `${browseInstructions}\n${task}` },{ role: 'user',content: JSON.stringify(input) }] },
-        AbortSignal.any([signal,AbortSignal.timeout(180000)]),consume,'AI帮你刷',{ schema,usage: value => {
+        bindTraceSignal(AbortSignal.any([signal,AbortSignal.timeout(180000)]),traceForSignal(signal)),consume,'AI帮你刷',{ schema,usage: value => {
           log.inputTokens! += value.inputTokens ?? 0; log.outputTokens! += value.outputTokens ?? 0;
           if (value.inputTokens !== undefined && value.outputTokens !== undefined) usageCalls++;
         } });
@@ -49,6 +51,7 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
   const cachedIds = new Set<string>();
   try {
     let memory = await readBrowseMemory();
+    for (const [family,until] of Object.entries(memory.sourceCooldowns ?? {})) if (until > Date.now()) cooldowns.set(family,Math.max(until,cooldowns.get(family) ?? 0));
     history = memory.context === context ? memory.searches ?? [] : [];
     const watched = new Set((await samples('watched',300)).map(item => item.bvid));
     const eligible = new Set(mergeBrowseCandidates([(memory.context === context ? memory.pool ?? [] : []).map(pick => pick.video)],memory,watched).filter(allowed).map(video => video.bvid));
@@ -71,20 +74,50 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
           pool: same ? latest.pool : [],round: (same ? latest.round : 0)+1,queries: same ? latest.queries : [],searches: same ? latest.searches : [] };
       });
       const sources = createBrowseSources(signal,log.sources,cooldowns), considered = new Set(accepted.map(pick => pick.video.bvid));
-      const discovered = new Set(considered), backlog: BrowseVideo[] = [];
+      const discovered = new Set(considered), evaluated = new Set<string>();
+      const available = (family: string) => sources.available(family) && network.available(family);
+      const discover = (videos: BrowseVideo[], source: string) => {
+        const added = mergeBrowseCandidates([videos],memory,watched).filter(video => allowed(video) && !discovered.has(video.bvid)).length;
+        log.discovered! += added; log.sourceAdded![source] = (log.sourceAdded![source] ?? 0)+added;
+        for (const video of videos) discovered.add(video.bvid);
+        return added;
+      };
+      const factsInput = (batch: BrowseEvidence[]) => ({ plan: user.plan,scopeNote: user.scopeNote,profile,topics: [...new Set(accepted.map(pick => pick.topic))],
+        candidates: batch.map((video,i) => ({ id: `v${i}`,title: video.title,description: video.description,tags: video.tags,duration: video.duration,
+          partCount: video.partCount,coverage: video.coverage,checkedPage: video.checkedPage,excerpt: video.excerpt,
+          ...(video.chapters ? { chapters: video.chapters.map(({ page,title,duration }) => ({ page,title,duration })) } : { parts: video.parts }) })) });
+      const consumeFacts = (value: unknown, batch: BrowseEvidence[]) => {
+        const facts = inspectBrowseFacts(value,batch);
+        log.rawChoices! += facts.rawCount; log.validChoices! += facts.valid.length;
+        for (const choice of facts.valid) {
+          log.scopes![choice.scope] = (log.scopes![choice.scope] ?? 0)+1;
+          log.evidence![choice.evidence] = (log.evidence![choice.evidence] ?? 0)+1;
+        }
+        mark(facts.picks.map(pick => pick.video),'qualified'); accepted.push(...facts.picks);
+        return facts;
+      };
       const liked = memory.feedback.filter(item => item.vote === 1);
       for (let cycle = 0; cycle < 3 && network.remaining && selectBrowsePicks(accepted).length < 12; cycle++) {
         signal.throwIfAborted();
-        const search = await ai('search',browseSearchTask,{ ...user,profile,cycle,coverage: accepted.map(pick => ({ scope: pick.scopeKey,topic: pick.topic })),
-          recentQueries: memory.queries,results: browseSearchSummary([...history,...log.queries!]) },browseSearchPlanSchema,value => browseSearchPlanSchema.parse(value));
-        log.plannedQueries! += search.searches.length;
-        const tasks = prepareBrowseSearches(search.searches,[...history,...log.queries!],log.skippedQueries!);
-        await updateBrowseMemory(latest => { signal.throwIfAborted(); return { ...latest,queries: [...latest.queries,...tasks.map(task => task.query)] }; });
-        memory.queries = [...memory.queries,...tasks.map(task => task.query)].slice(-40);
-        const groups: BrowseVideo[][] = [backlog];
-        const home = await sources.collect('B站推荐','home',() => browseHome(signal,network)); groups.push(home);
-        for (const video of home) discovered.add(video.bvid);
-        for (const task of tasks) {
+        if (!['home','search',...(liked.length ? ['related'] : [])].some(available)) { log.stopReason = 'sources-unavailable'; break; }
+        const acceptedBefore = accepted.length;
+        let tasks = [] as ReturnType<typeof prepareBrowseSearches>;
+        if (available('search')) {
+          const results = browseSearchSummary([...history,...log.queries!]);
+          const search = await ai('search',browseSearchTask,{ ...user,profile,cycle,coverage: accepted.map(pick => ({ scope: pick.scopeKey,topic: pick.topic })),
+            recentQueries: results.map(item => item.query),results },browseSearchPlanSchema,value => browseSearchPlanSchema.parse(value));
+          log.plannedQueries! += search.searches.length;
+          tasks = prepareBrowseSearches(search.searches,[...history,...log.queries!],log.skippedQueries!);
+        } else log.searchPlanningSkipped!++;
+        const firstQuery = log.queries!.length;
+        const groups: BrowseVideo[][] = [];
+        if (available('home')) {
+          const home = await sources.collect('B站推荐','home',() => browseHome(signal,network)); groups.push(home); discover(home,'home');
+        }
+        for (const [taskIndex,task] of tasks.entries()) {
+          if (!available('search')) {
+            log.skippedQueries!.push(...tasks.slice(taskIndex).map(item => ({ query: item.query,reason: (cooldowns.get('search') ?? 0) > Date.now() ? 'cooldown' : 'budget' }))); break;
+          }
           const start = Date.now(), sourceIndex = log.sources.length, requestIndex = log.requests!.length;
           const page = browseQueryPage([...history,...log.queries!],task);
           const query: BrowseQueryResult = { ...task,id: crypto.randomUUID(),key: browseQueryKey(task),page,at: start,ok: false,errorKind: 'pending',durationMs: 0,
@@ -92,31 +125,39 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
           log.queries!.push(query);
           let videos: BrowseVideo[];
           try { videos = await sources.collect(`搜索：${task.query}`,'search',() => browseSearch(task.query,task.order,page,signal,network)); }
-          catch (error) { query.durationMs = Date.now()-start; query.errorKind = signal.reason?.name === 'TimeoutError' ? 'timeout' : 'cancelled'; throw error; }
+          catch (error) { query.sent = log.requests!.slice(requestIndex).some(item => item.kind === 'search' && item.sent); query.durationMs = Date.now()-start; query.errorKind = signal.reason?.name === 'TimeoutError' ? 'timeout' : 'cancelled'; throw error; }
           const outcome = log.sources.slice(sourceIndex).at(-1);
           const response = log.requests!.slice(requestIndex).findLast(item => item.kind === 'search' && !item.error);
           const valid = mergeBrowseCandidates([videos],memory,watched), permitted = valid.filter(allowed);
           Object.assign(query,{
+            sent: log.requests!.slice(requestIndex).some(item => item.kind === 'search' && item.sent),
             ok: outcome?.kind === 'success' || outcome?.kind === 'empty',errorKind: ['success','empty'].includes(outcome?.kind ?? '') ? undefined : outcome?.kind,
             durationMs: Date.now()-start,returned: videos.length,rawReturned: response?.count ?? videos.length,
-            added: permitted.filter(video => !discovered.has(video.bvid) && !considered.has(video.bvid)).length,
+            added: discover(videos,'search'),
             filtered: (response?.count ?? videos.length)-videos.length+valid.length-permitted.length });
-          for (const video of videos) discovered.add(video.bvid);
           groups.push(videos.map(video => ({ ...video,queryKeys: [query.id] })));
         }
-        if (liked.length) groups.push(await sources.collect('点赞关联','related',() => browseRelated(liked[(memory.round+cycle-1)%liked.length]!.video.bvid,signal,network)));
+        const attempted = log.queries!.slice(firstQuery).filter(query => query.sent || query.ok).map(query => query.query);
+        if (attempted.length) await updateBrowseMemory(latest => { signal.throwIfAborted(); return { ...latest,queries: [...latest.queries,...attempted] }; });
+        if (liked.length && available('related')) {
+          const related = await sources.collect('点赞关联','related',() => browseRelated(liked[(memory.round+cycle-1)%liked.length]!.video.bvid,signal,network));
+          groups.push(related); discover(related,'related');
+        }
         const latest = await readBrowseMemory();
-        const candidates = mergeBrowseCandidates(groups,latest,watched).filter(video => !considered.has(video.bvid) && allowed(video)).slice(0,100);
+        const merged = mergeBrowseCandidates(groups,latest,watched).filter(allowed);
+        log.skippedEvaluated! += merged.filter(video => evaluated.has(video.bvid)).length;
+        const candidates = merged.filter(video => !considered.has(video.bvid) && !evaluated.has(video.bvid)).slice(0,100);
         log.candidates += candidates.length;
-        if (!candidates.length) { if (!sources.remaining) break; continue; }
+        if (!candidates.length) { if (!available('search')) { log.stopReason = 'no-new-candidates'; break; } continue; }
         if (!network.remaining) break;
+        for (const video of candidates) evaluated.add(video.bvid);
+        log.candidateEvaluations! += candidates.length;
         const shortlist = await ai('shortlist','从真实候选中选择最多18条值得核验的内容，按价值排序。保留不同主题与互补角度，不规定长短比例。只输出 {"ids":["v0"]}，允许为空。',
           { plan: user.plan,scopeNote: user.scopeNote,profile,preferences: user.preferences,feedback: user.feedback,
             candidates: candidates.map((video,i) => ({ id: `v${i}`,title: video.title,tags: video.tags,description: video.description.slice(0,500),
             duration: video.duration,sources: video.sources })) },browseShortlistSchema,value => browseShortlistSchema.parse(value));
-        const selected = resolveBrowseIds(shortlist.ids,candidates), selectedIds = new Set(selected.map(video => video.bvid));
+        const selected = resolveBrowseIds(shortlist.ids,candidates);
         mark(selected,'shortlisted');
-        backlog.splice(0,backlog.length,...candidates.filter(video => !selectedIds.has(video.bvid)));
         const evidence: BrowseEvidence[] = [];
         await Promise.all([0,1].map(async worker => {
           for (let i = worker; i < selected.length && network.remaining; i += 2) {
@@ -130,20 +171,23 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
         const detailed = evidence.filter(Boolean); log.detailed! += detailed.length; log.subtitles! += detailed.filter(video => video.excerpt).length;
         for (let offset = 0; offset < detailed.length; offset += 6) {
           const batch = detailed.slice(offset,offset+6);
-          accepted.push(...await ai('facts',browseFactsTask,{ plan: user.plan,scopeNote: user.scopeNote,profile,topics: [...new Set(accepted.map(pick => pick.topic))],
-            candidates: batch.map((video,i) => ({ id: `v${i}`,title: video.title,description: video.description,tags: video.tags,duration: video.duration,
-              partCount: video.partCount,coverage: video.coverage,checkedPage: video.checkedPage,excerpt: video.excerpt,
-              ...(video.chapters ? { chapters: video.chapters.map(({ page,title,duration }) => ({ page,title,duration })) } : { parts: video.parts }) })) },
-          browseFactsSchema,value => {
-            const facts = browseFactsSchema.parse(value);
-            for (const choice of facts.choices) {
-              log.scopes![choice.scope] = (log.scopes![choice.scope] ?? 0)+1;
-              log.evidence![choice.evidence] = (log.evidence![choice.evidence] ?? 0)+1;
-            }
-            const picks = browsePicks(facts,batch); mark(picks.map(pick => pick.video),'qualified'); return picks;
-          }));
+          const facts = await ai('facts',browseFactsTask,factsInput(batch),browseFactsSchema,value => consumeFacts(value,batch));
           factBatches++;
+          if (facts.disputed.length) {
+            const disputed = facts.disputed.map(index => batch[index]!);
+            log.disputedCandidates! += disputed.length; log.repairCalls!++;
+            try {
+              const repaired = await ai('facts-repair',`${browseFactsTask}\n本次仅修正之前编号缺失、重复或分P不存在的候选。每个候选必须恰好一个判断，只能选择一个入口；无法确认时标unknown或insufficient，不能同时推荐多个分P。`,
+                factsInput(disputed),browseFactsSchema,value => consumeFacts(value,disputed));
+              log.repairDropped! += repaired.disputed.length;
+            } catch (error) {
+              if (signal.aborted) throw error;
+              log.repairDropped! += disputed.length;
+              log.error = [log.error,`核验修正：${(error as Error).message}`].filter(Boolean).join('；');
+            }
+          }
         }
+        if (!available('search') && accepted.length === acceptedBefore) { log.stopReason = 'no-qualified-progress'; break; }
       }
     } catch (error) {
       log.error = (error as Error).message;
@@ -152,7 +196,7 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
     }
     await ensureContext();
     if (signal.aborted && signal.reason?.name !== 'TimeoutError') signal.throwIfAborted();
-    if ((accepted.length > 12 || factBatches > 1) && factBatches && !signal.aborted) {
+    if (accepted.length > 1 && (accepted.length > 12 || factBatches > 1) && factBatches && !signal.aborted) {
       accepted = fallbackBrowseRanking(accepted);
       try {
         accepted = await ai('ranking',browseGlobalTask,{ ...user,profile,candidates: accepted.map((pick,i) => ({
@@ -181,9 +225,13 @@ export async function selectBrowseBatch(prefs: Preferences, readPreferences: () 
     log.error = (error as Error).message; throw error;
   } finally {
     log.durationMs = Date.now()-started;
+    log.sourceCooldowns = Object.fromEntries([...cooldowns].filter(([,until]) => until > Date.now()));
     log.usageComplete = usageCalls === log.modelCalls;
-    await updateBrowseMemory(memory => ({ ...memory,logs: logEpoch === browseLogEpoch() ? [...(memory.logs ?? []),log] : memory.logs,
+    await updateBrowseMemory(memory => ({ ...memory,sourceCooldowns: log.sourceCooldowns,logs: logEpoch === browseLogEpoch() ? [...(memory.logs ?? []),log] : memory.logs,
       searches: memory.context === context ? [...history,...log.queries!] : memory.searches }));
-    console.info('AI帮你刷选片',log);
+    await recordTraceStep(signal, `选片汇总：发布${log.published}条，候选${log.candidates}条，核验${log.checked}条`, log.error || !log.published ? 'warn' : 'info', {
+      published: log.published, candidates: log.candidates, checked: log.checked, modelCalls: log.modelCalls ?? 0,
+      cached: log.cached, inputTokens: log.inputTokens ?? 0, outputTokens: log.outputTokens ?? 0,
+    });
   }
 }

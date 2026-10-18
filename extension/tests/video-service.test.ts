@@ -29,7 +29,9 @@ beforeEach(() => {
   mocks.model.mockReset();
   mocks.model.mockImplementation(async (_prefs, _selection, body, signal: AbortSignal, consume: (value: unknown) => Promise<unknown>, _feature: string, options: { schema?: unknown; preview?: (text: string) => void; partial?: (value: unknown) => void }) => {
     signal.throwIfAborted(); mocks.bodies.push(body);
-    const value = mocks.output.shift() ?? { summary: '视频总结', points: ['重点'] };
+    const data = JSON.parse(body.messages[1].content);
+    const first = data.subtitle ? Number(data.subtitle.match(/^\d+/)?.[0] ?? 0) : data.parts?.[0]?.blocks?.[0]?.props?.items?.[0]?.ref ?? 0;
+    const value = mocks.output.shift() ?? summaryUI(first);
     if (options.schema) { options.partial?.(value); return consume(value); }
     const answer = value as { summary: string; refs?: number[] };
     const text = typeof value === 'string' ? value : answer.summary + (answer.refs ?? []).map(id => `[[${id}]]`).join('');
@@ -42,11 +44,16 @@ async function subtitles(cid = 10) { return await service({ type: 'video-subtitl
 function task(cache: VideoCache, kind: 'summary' | 'chapters' | 'chat' = 'summary'): Extract<VideoMessage,{type: 'video-analyze'}> {
   return { type: 'video-analyze', bvid: 'BVtest', cid: cache.source.cid, language: 'zh', fingerprint: cache.fingerprint, task: kind, requestId: crypto.randomUUID(), selection: { providerId: 'deepseek', model: 'deepseek-flash' }, ...(kind === 'chat' ? { question: '重点是什么？' } : {}) };
 }
+
+function summaryUI(ref = 0) {
+  return { headline: '视频总结', context: '', blocks: [{ type: 'KeyPoints', props: { title: '重点', condition: '',
+    items: [{ title: '重要结论', text: '简要说明', detail: '完整论据', ref }] } }] };
+}
 test('P1与P2缓存独立，刷新及后台重建可恢复总结且密钥不返回页面', async () => {
   const p1 = await subtitles(), p2 = await subtitles(20);
   await service(task(p1)); service = createVideoService(async () => prefs);
   const restored = await subtitles();
-  expect(restored.summary?.value.summary).toBe('视频总结'); expect(p2.summary).toBeUndefined();
+  expect(restored.summary?.value.summary).toContain('视频总结'); expect(p2.summary).toBeUndefined();
   expect((await subtitles(20)).summary).toBeUndefined(); expect(JSON.stringify(restored)).not.toContain('private-key');
   expect(mocks.model).toHaveBeenCalledOnce();
 });
@@ -68,16 +75,49 @@ test('章节完整覆盖字幕且广告引用落到真实字幕行', async () =>
   expect(mocks.bodies[0]).toMatchObject({ stream: true, response_format: { type: 'json_object' } });
 });
 
-test('总结直接流式发送正文，不要求结构化输出，并使用总结专用配置', async () => {
+test('总结流式发送组件组合，保留完整文本与专用配置', async () => {
   const cache = await subtitles(), progress = vi.fn();
   prefs.settings.videoAssistant.summary.maxTokens = 16384;
   prefs.settings.videoAssistant.chat.maxTokens = 4096;
-  mocks.output.push('第一段总结\n• 一个重要结论');
+  mocks.output.push(summaryUI());
   const result = await service(task(cache),progress) as VideoCache;
   expect(mocks.bodies[0]).toMatchObject({ stream: true, max_tokens: 16384 });
-  expect(mocks.bodies[0]).not.toHaveProperty('response_format');
-  expect(progress.mock.calls.some(([event]) => event.summary === '第一段总结\n• 一个重要结论')).toBe(true);
-  expect(result.summary?.value).toEqual({ summary: '第一段总结\n• 一个重要结论', points: [] });
+  expect(mocks.bodies[0]).toHaveProperty('response_format');
+  expect(progress.mock.calls.some(([event]) => event.summaryUI?.headline === '视频总结')).toBe(true);
+  expect(result.summary?.value.ui).toEqual(summaryUI());
+  expect(result.summary?.value.summary).toContain('完整论据');
+  expect(result.summary?.value.summary).toContain('[00:00]');
+});
+
+test('总结断流不覆盖旧结果，预览和无效引用不会进入缓存', async () => {
+  const cache = await subtitles(); await service(task(cache));
+  const previous = (await subtitles()).summary;
+  const progress = vi.fn();
+  mocks.model.mockImplementationOnce(async (_p,_s,_body,_signal,_consume,_feature,options) => {
+    options.partial(summaryUI());
+    expect((await subtitles()).summary).toEqual(previous);
+    throw new Error('模拟总结断流');
+  });
+  await expect(service(task(cache),progress)).rejects.toThrow('模拟总结断流');
+  expect(progress.mock.calls.some(([event]) => event.summaryUI?.blocks.length === 1)).toBe(true);
+  expect((await subtitles()).summary).toEqual(previous);
+  mocks.output.push(summaryUI(99));
+  await expect(service(task(cache))).rejects.toThrow('引用');
+  expect((await subtitles()).summary).toEqual(previous);
+});
+
+test('长视频总结只沿用各分段已有引用，合并新增引用时保留旧缓存', async () => {
+  const old = await subtitles(); await service(task(old));
+  mocks.rows = Array.from({ length: 200 },(_,i) => ({ start: i, end: i+1, text: `第${i}句`.repeat(40) }));
+  const cache = await service({ type: 'video-subtitles', bvid: 'BVtest', cid: 10, language: 'zh', refresh: true }) as VideoCache;
+  prefs.settings.videoAssistant.summary = { ...prefs.settings.videoAssistant.summary, contextTokens: 16000, maxTokens: 1024 };
+  mocks.model.mockImplementation(async (_p,_s,body,_signal,consume) => {
+    const data = JSON.parse(body.messages[1].content);
+    const ref = data.subtitle ? Number(data.subtitle.match(/^\d+/)[0]) : 1;
+    return consume(summaryUI(ref));
+  });
+  await expect(service(task(cache))).rejects.toThrow('引用');
+  expect((await subtitles()).summary).toBeUndefined();
 });
 
 test('官方章节不依赖字幕行或模型密钥，不发起AI生成', async () => {

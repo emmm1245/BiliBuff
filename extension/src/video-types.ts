@@ -1,5 +1,6 @@
 // 定义视频工作台的分P身份、字幕、章节、问答、下载与受限后台消息。
 import type { ChapterPreview } from './analysis/schemas';
+import type { SummaryPreview, VideoSummary } from './video-summary';
 export interface VideoPart { page: number; cid: number; title: string; duration: number }
 export interface SubtitleTrack { id: string; name: string; ai: boolean }
 export interface SubtitleRow { start: number; end: number; text: string }
@@ -23,7 +24,7 @@ export interface VideoAnswer { question: string; answer: string; refs: number[];
 export interface VideoResult<T> { value: T; at: number; selection: VideoSelection; fingerprint: string }
 export interface VideoCache {
   source: VideoSource; language: string; rows: SubtitleRow[]; fingerprint: string; at: number;
-  summary?: VideoResult<{ summary: string; points: string[] }>;
+  summary?: VideoResult<VideoSummary>;
   chapters?: VideoResult<VideoChapter[]>; answers: VideoAnswer[];
 }
 export interface MediaChoice { id: string; label: string; kind: 'video' | 'audio'; combined: boolean; quality: number; codec: string; extension: string; size?: number }
@@ -37,4 +38,4 @@ export type VideoMessage =
   | { type: 'video-cancel'; requestId: string }
   | { type: 'video-media'; bvid: string; cid: number }
   | { type: 'video-download'; bvid: string; cid: number; choice: string };
-export interface VideoProgress { type: 'video-progress'; requestId: string; summary: string; thinking: boolean; status?: string; chapters?: ChapterPreview }
+export interface VideoProgress { type: 'video-progress'; requestId: string; summary: string; thinking: boolean; status?: string; chapters?: ChapterPreview; summaryUI?: SummaryPreview }

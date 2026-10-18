@@ -1,6 +1,6 @@
 // 跨页面串行调度评论读取和签名，持久保存限流冷却并保留250毫秒启动间隔。
 import { browser } from 'wxt/browser';
-import { signedCommentQuery } from '../comment-sign';
+import { signedWbiQuery } from '../wbi-sign';
 import { commentJSON, commentPage, CommentReadLimit, type ReplyData } from './api';
 import type { CommentMessage } from '../comment-types';
 const COOLDOWN = 'comment-requests-paused-until';
@@ -43,7 +43,7 @@ export function createCommentReader() {
           }).finally(() => { signing = undefined; });
           await signing;
         }
-        path = `/x/v2/reply/wbi/main?${signedCommentQuery({ oid: message.oid, type: '1', mode: '2', pagination_str: JSON.stringify({ offset: message.offset || '' }), plat: '1', web_location: '1315875' }, signingKeys!.img, signingKeys!.sub)}`;
+        path = `/x/v2/reply/wbi/main?${signedWbiQuery({ oid: message.oid, type: '1', mode: '2', pagination_str: JSON.stringify({ offset: message.offset || '' }), plat: '1', web_location: '1315875' }, signingKeys!.img, signingKeys!.sub)}`;
       }
       try { return commentPage(await read<ReplyData>(path)); } catch (error) { signingKeys = undefined; throw error; }
     }

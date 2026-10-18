@@ -33,6 +33,12 @@ test('在 document_start 读取规则，首页挂载独立于原站点加载', a
   expect(mocks.send).toHaveBeenCalledWith({ type: 'rules' });
 });
 
+test('留白设置直接打开首页外观面板', async () => {
+  setup();
+  await mocks.create.mock.calls[0]![0]();
+  expect(mocks.send).toHaveBeenCalledWith({ type: 'open-settings', section: 'home' });
+});
+
 test('首次读取设置主题后才挂载首页，主题更新不重新处理规则', async () => {
   setup('dark');
   await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledOnce());

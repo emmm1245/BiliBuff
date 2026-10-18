@@ -10,7 +10,7 @@ export default defineContentScript({
   matches: ['https://www.bilibili.com/*'],
   runAt: 'document_start',
   main(ctx) {
-    const home = createSearchHome(() => send({ type: 'open-settings' }), term => send({ type: 'suggest', term }));
+    const home = createSearchHome(() => send({ type: 'open-settings', section: 'home' }), term => send({ type: 'suggest', term }));
     let settings: ContentSettings | undefined;
     let epoch = 0;
     let themeEpoch = 0;

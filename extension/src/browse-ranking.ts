@@ -84,6 +84,18 @@ export function browsePicks(value: unknown, videos: BrowseEvidence[]): BrowsePic
       topic: choice.topic,scopeKey: choice.scopeKey,topicKey: browseTopicKey(choice.scopeKey,choice.topic),contentType: choice.contentType,evidence: choice.evidence,checkedAt: Date.now() }];
   });
 }
+export function inspectBrowseFacts(value: unknown, videos: BrowseEvidence[]) {
+  const result = browseFactsSchema.parse(value), disputed: number[] = [];
+  for (let i = 0; i < videos.length; i++) {
+    const choices = result.choices.filter(choice => choice.id === `v${i}`);
+    const choice = choices[0];
+    if (choices.length !== 1 || !choice || (choice.page && !videos[i]!.chapters?.some(part => part.page === choice.page))) disputed.push(i);
+  }
+  const valid = result.choices.filter(choice => /^v\d+$/.test(choice.id) && videos[Number(choice.id.slice(1))] &&
+    choice.id === `v${Number(choice.id.slice(1))}` && !disputed.includes(Number(choice.id.slice(1))));
+  const picks = valid.flatMap(choice => browsePicks({ choices: [{ ...choice,id: 'v0' }] },[videos[Number(choice.id.slice(1))]!]));
+  return { picks,valid,disputed,rawCount: result.choices.length };
+}
 export function rankBrowsePicks(value: unknown, picks: BrowsePick[]) {
   const result = browseGlobalSchema.parse(value), ids = result.choices.map(choice => choice.id);
   resolveBrowseIds(ids,picks.map(pick => pick.video));

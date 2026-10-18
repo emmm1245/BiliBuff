@@ -22,18 +22,22 @@ export interface BrowsePick {
 }
 export interface BrowseSearchTask { query: string; intent: string; scopeKey: string; order: 'totalrank' | 'pubdate'; fallback: string; originalQuery?: string }
 export interface BrowseQueryResult extends BrowseSearchTask {
-  id: string; key: string; page: number; at: number; ok: boolean; errorKind?: string; durationMs: number;
+  id: string; key: string; page: number; at: number; ok: boolean; errorKind?: string; durationMs: number; sent?: boolean;
   returned: number; rawReturned: number; added: number; filtered: number; shortlisted: number; qualified: number; pooled: number; published: number;
 }
 export interface BrowseSourceAttempt { source: string; attempt: number; count: number; error?: string; kind?: string; durationMs?: number }
 export interface BrowseRequestLog { kind: string; path: string; durationMs: number; sent?: boolean; http?: number; code?: number; count?: number; error?: string; errorKind?: string }
 export interface BrowseRoundLog {
+  operationId?: string;
   at: number; durationMs: number; sources: BrowseSourceAttempt[]; candidates: number; checked: number; accepted: number; published: number; cached: number; error?: string;
   contextVersion?: number; revision?: number; requests?: BrowseRequestLog[]; queries?: BrowseQueryResult[];
   scopes?: Record<string,number>; evidence?: Record<string,number>; detailed?: number; subtitles?: number;
   modelCalls?: number; inputTokens?: number; outputTokens?: number; stages?: Record<string,number>; unselected?: number;
   usageComplete?: boolean;
   plannedQueries?: number; skippedQueries?: { query: string; reason: string }[];
+  candidateEvaluations?: number; skippedEvaluated?: number; discovered?: number; sourceAdded?: Record<string,number>;
+  rawChoices?: number; validChoices?: number; disputedCandidates?: number; repairCalls?: number; repairDropped?: number;
+  searchPlanningSkipped?: number; sourceCooldowns?: Record<string,number>; stopReason?: string;
 }
 export interface BrowseFeedback { video: BrowseVideo; vote: 1 | -1; at: number }
 export interface BrowseMemory {
@@ -44,6 +48,7 @@ export interface BrowseMemory {
   pool?: BrowsePick[];
   logs?: BrowseRoundLog[];
   searches?: BrowseQueryResult[];
+  sourceCooldowns?: Record<string,number>;
 }
 export interface BrowseState {
   items: (BrowseVideo & { vote: 1 | -1 | 0 })[];
@@ -53,4 +58,5 @@ export type BrowseMessage =
   | { type: 'browse-state' }
   | { type: 'browse-refresh' }
   | { type: 'browse-cancel' }
+  | { type: 'browse-cache-clear' }
   | { type: 'browse-feedback'; bvid: string; vote: 1 | -1 | 0 };

@@ -1,5 +1,7 @@
 // 离线验证调试日志默认关闭、完整输入输出、失败与取消、并发及清除后的隔离。
 import 'fake-indexeddb/auto';
+import { allOperations, beginOperation, bindTraceSignal, clearOperations } from '../src/platform/diagnostics';
+import { beginLog } from '../src/platform/ai-logs';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { allDebugLogs, clearDebugLogs, DEBUG_ENABLED_KEY, debugState, setDebugEnabled, traceAIRequest } from '../src/ai-debug';
 import { requestAI } from '../src/ai-request';
@@ -192,4 +194,56 @@ test('HTTP正常结束但章节业务校验失败时日志标记失败，不误�
   },'视频章节',{ schema: chaptersOutputSchema })).rejects.toThrow('起始行无效');
   expect((await allDebugLogs())[0]).toMatchObject({ status: 'error', httpStatus: 200, error: expect.stringContaining('起始行无效') });
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test('关闭详细调试仍保留可追踪的诊断摘要，不保存模型正文', async () => {
+  await clearOperations(); await setDebugEnabled(false);
+  const parent = await beginOperation('选片', '开始');
+  const linked = bindTraceSignal(signal(), parent.id);
+  await traceAIRequest('AI帮你刷', { ...details, input: { privatePlan: 'private-plan-content' } }, linked,
+    async () => new Response('private-output-content'), response => response.text());
+  const operations = await allOperations();
+  expect(operations.find(log => log.parentId === parent.id)).toMatchObject({ status: 'success' });
+  expect(JSON.stringify(operations)).not.toContain('private-plan-content');
+  expect(JSON.stringify(operations)).not.toContain('private-output-content');
+  expect(await allDebugLogs()).toEqual([]);
+});
+
+test('清除诊断后的旧任务不能通过新模型调用恢复原始日志', async () => {
+  await setDebugEnabled(true); await clearOperations();
+  const parent = await beginOperation('选片', '开始');
+  const linked = bindTraceSignal(signal(), parent.id);
+  await clearOperations(); await clearDebugLogs();
+  expect(await traceAIRequest('AI帮你刷', details, linked, async () => new Response('完成'), response => response.text())).toBe('完成');
+  expect(await allOperations()).toEqual([]); expect(await allDebugLogs()).toEqual([]);
+});
+
+test('原始内容达到保存上限只截断日志，不截断业务响应；重复读取保持截断预览稳定', async () => {
+  await setDebugEnabled(true);
+  const output = '正文'.repeat(200000);
+  expect(await traceAIRequest('计划分析', { ...details, input: { content: '输入'.repeat(200000) } }, signal(),
+    async () => new Response(output), response => response.text())).toBe(output);
+  const [first] = await allDebugLogs();
+  expect(first).toMatchObject({ status: 'success', truncated: true });
+  expect(first!.output.length).toBeLessThanOrEqual(256 * 1024);
+  const [second] = await allDebugLogs();
+  expect(second!.input).toEqual(first!.input);
+});
+
+test('原始日志按保留天数和条数淘汰', async () => {
+  const base = { feature: '计划分析' as const, service: '离线', url: 'https://example.com', input: {}, output: '', status: 'success' as const };
+  await beginLog({ ...base, id: 'expired', startedAt: new Date(Date.now() - 4 * 86400000).toISOString() });
+  for (let i = 0; i < 52; i++) await beginLog({ ...base, id: `bounded-${i}`, startedAt: new Date(Date.now() + i).toISOString() });
+  const saved = await allDebugLogs();
+  expect(saved).toHaveLength(50); expect(saved.some(log => log.id === 'expired')).toBe(false);
+  expect(saved.some(log => log.id === 'bounded-51')).toBe(true);
+});
+
+test('原始记录合计容量有上限，体积较大时优先淘汰旧记录', async () => {
+  for (let i = 0; i < 12; i++) await beginLog({ id: `size-${i}`, feature: '计划分析', service: '离线', url: 'https://example.com',
+    input: { text: '字'.repeat(128 * 1024) }, output: '字'.repeat(256 * 1024), status: 'success', startedAt: new Date(Date.now() + i).toISOString() });
+  const saved = await allDebugLogs();
+  expect(saved.length).toBeLessThan(12);
+  expect(saved.reduce((sum, log) => sum + new TextEncoder().encode(JSON.stringify(log)).length, 0)).toBeLessThanOrEqual(10 * 1024 * 1024);
+  expect(saved.some(log => log.id === 'size-11')).toBe(true);
 });

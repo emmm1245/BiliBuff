@@ -1,6 +1,6 @@
 // 验证查询独立分页、失败与空结果的区分、替代搜索和近似任务去重。
 import { expect, test } from 'vitest';
-import { browseQueryKey, browseQueryPage, normalizeBrowseQuery, prepareBrowseSearches } from '../src/browse-search';
+import { browseQueryKey, browseQueryPage, browseSearchSummary, normalizeBrowseQuery, prepareBrowseSearches } from '../src/browse-search';
 import type { BrowseQueryResult, BrowseSearchTask } from '../src/browse-types';
 
 const task = (query = '自然光 人像', order: BrowseSearchTask['order'] = 'totalrank'): BrowseSearchTask => ({ query,order,intent: '实拍演示',scopeKey: '摄影',fallback: '人像 用光' });
@@ -47,4 +47,12 @@ test('仅去除空格与明确的修饰词，不混淆语言符号、版本或�
   const prior = task('人像构图实拍讲解');
   const next = prepareBrowseSearches([task('超详细人像构图实拍讲解')],[record(prior,{ page: 2 })])[0]!;
   expect(browseQueryPage([record(prior,{ page: 2 })],next)).toBe(3);
+});
+
+test('未执行的冷却和预算任务不作为搜索反馈，实际失败仍保留故障信息', () => {
+  const history = [record(task()),record(task('冷却词'),{ ok: false,errorKind: 'cooldown' }),
+    record(task('预算词'),{ ok: false,errorKind: 'budget' }),record(task('未发送'),{ sent: false }),
+    record(task('真实限制'),{ ok: false,errorKind: 'limited',sent: true })];
+  expect(browseSearchSummary(history).map(item => item.query)).toEqual(['自然光 人像','真实限制']);
+  expect(browseSearchSummary(history)[1]).toMatchObject({ ok: false,errorKind: 'limited' });
 });

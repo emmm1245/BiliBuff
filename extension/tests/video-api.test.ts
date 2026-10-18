@@ -2,6 +2,8 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mediaResource, readVideoRows, readVideoSource, subtitleResource, videoMedia } from '../src/video-api';
 import type { VideoSource } from '../src/video-types';
+vi.mock('wxt/browser',() => ({ browser: { storage: { local: { get: async () => ({}),set: async () => {} } } } }));
+const signingData = { wbi_img: { img_url: 'https://i0.hdslb.com/7cd084941338484aae1ad9425b84077c.png',sub_url: 'https://i0.hdslb.com/4932caff0ff746eab6f01bf08b70ac45.png' } };
 
 afterEach(() => vi.unstubAllGlobals());
 test('字幕和媒体仅允许B站受控资源域名，保留签名查询', () => {
@@ -31,7 +33,7 @@ test('元数据同时读取官方章节，没有字幕仍可显示章节', async
 });
 test('完整MP4、纯视频和音频格式明确区分，下载地址不由页面提供', async () => {
   vi.stubGlobal('fetch',vi.fn(async (url: string) => new Response(JSON.stringify({ code: 0, data: url.includes('/view?') ? { aid: 1, title: '视频', pages: [{ page: 1, cid: 7, duration: 20, part: '一' }] }
-    : url.includes('fnval=1&') ? { quality: 64, format: 'mp4720', accept_quality: [64], accept_description: ['720P'], durl: [{ url: 'https://cdn.bilivideo.com/full.mp4', size: 100 }] }
+    : url.endsWith('/nav') ? signingData : url.includes('fnval=1&') ? { quality: 64, format: 'mp4720', accept_quality: [64], accept_description: ['720P'], durl: [{ url: 'https://cdn.bilivideo.com/full.mp4', size: 100 }] }
     : { quality: 80, format: 'dash', accept_quality: [80], accept_description: ['1080P'], dash: { video: [{ id: 80, codecs: 'avc1', bandwidth: 1000000, baseUrl: 'https://cdn.bilivideo.com/video.m4s' }], audio: [{ id: 30280, codecs: 'mp4a', bandwidth: 128000, baseUrl: 'https://cdn.bilivideo.com/audio.m4s' }] } } }))));
   const media = await videoMedia('BVmedia',7);
   expect(media.map(m => [m.kind,m.combined,m.extension])).toEqual([['video',true,'mp4'],['video',false,'mp4'],['audio',false,'m4a']]);
@@ -41,9 +43,24 @@ test('完整MP4、纯视频和音频格式明确区分，下载地址不由页�
 test('不支持的主节点使用常规CDN备用地址，单个无效格式不影响其他格式', async () => {
   vi.stubGlobal('fetch',vi.fn(async (url: string) => new Response(JSON.stringify({ code: 0, data: url.includes('/view?')
     ? { aid: 1, title: '视频', pages: [{ page: 1, cid: 8, duration: 20, part: '一' }] }
-    : url.includes('fnval=1&') ? { quality: 64, format: 'mp4720', durl: [{ url: 'https://75un29t.edge.mountaintoys.cn/full.mp4', backup_url: ['https://upos-sz-mirrorcoso1.bilivideo.com/full.mp4?sig=ok'], size: 100 }] }
+    : url.endsWith('/nav') ? signingData : url.includes('fnval=1&') ? { quality: 64, format: 'mp4720', durl: [{ url: 'https://75un29t.edge.mountaintoys.cn/full.mp4', backup_url: ['https://upos-sz-mirrorcoso1.bilivideo.com/full.mp4?sig=ok'], size: 100 }] }
     : { quality: 80, format: 'dash', dash: { video: [{ id: 80, codecs: 'avc1', bandwidth: 1000000, baseUrl: 'https://edge.mountaintoys.cn/video.m4s', backupUrl: ['https://cdn.bilivideo.com/video.m4s'] },{ id: 64, codecs: 'avc1', baseUrl: 'https://unsupported.invalid/only.m4s' }], audio: [{ id: 30280, codecs: 'mp4a', bandwidth: 128000, base_url: 'https://edge.mountaintoys.cn/audio.m4s', backup_url: ['https://cdn.bilivideo.com/audio.m4s'] }] } } }))));
   const media = await videoMedia('BVfallback',8);
   expect(media).toHaveLength(3); expect(media[0]!.url).toBe('https://upos-sz-mirrorcoso1.bilivideo.com/full.mp4?sig=ok');
   expect(media.every(item => new URL(item.url).hostname.endsWith('.bilivideo.com'))).toBe(true);
+});
+
+test.each([false,true])('媒体接口受限立即停止其他格式请求；已获取格式仍可用：%s',async partial => {
+  vi.resetModules(); const { videoMedia: readMedia } = await import('../src/video-api');
+  const fetch = vi.fn(async (url: string) => {
+    if (url.includes('/view?')) return Response.json({ code: 0,data: { pages: [{ cid: 9 }] } });
+    if (url.endsWith('/nav')) return Response.json({ code: -101,data: signingData });
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/x/player/wbi/playurl'); expect(parsed.searchParams.get('w_rid')).toMatch(/^[a-f\d]{32}$/);
+    return partial && parsed.searchParams.get('fnval') === '1' ? Response.json({ code: 0,data: { format: 'mp4720',quality: 64,durl: [{ url: 'https://cdn.bilivideo.com/full.mp4' }] } }) : new Response('',{ status: 412 });
+  }); vi.stubGlobal('fetch',fetch);
+  if (partial) expect(await readMedia('BVlimited',9)).toMatchObject([{ id: 'mp4',combined: true }]);
+  else await expect(readMedia('BVlimited',9)).rejects.toMatchObject({ kind: 'limited' });
+  await expect(readMedia('BVlimited',9)).rejects.toMatchObject({ kind: 'cooldown' });
+  expect(fetch).toHaveBeenCalledTimes(partial ? 4 : 3);
 });

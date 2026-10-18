@@ -1,7 +1,7 @@
 // 验证签名、全量计数、短评筛选上下文、文本导出及模型引用边界。
 import { createHash } from 'node:crypto';
 import { afterEach, expect, test, vi } from 'vitest';
-import { md5, signedCommentQuery } from '../src/comment-sign';
+import { md5, signedWbiQuery } from '../src/wbi-sign';
 import { commentLink, commentsText, effectiveLength, quickReadInput, quickReadKey, selectComments } from '../src/comment-data';
 import { currentSettings, migrateSettings, validateBackup, validateSettings } from '../src/core';
 import type { CommentRecord, VideoCommentsSource } from '../src/comment-types';
@@ -16,8 +16,19 @@ afterEach(() => vi.unstubAllGlobals());
 
 test('签名散列兼容空串、中文、跨块文本及UTF8，WBI签名使用排序及过滤后的参数', () => {
   for (const value of ['', 'abc', '评论😀', 'a'.repeat(64), '长'.repeat(1000)]) expect(md5(value)).toBe(createHash('md5').update(value).digest('hex'));
-  const query = signedCommentQuery({ foo: "a!'()* b", bar: '中文' },'7cd084941338484aae1ad9425b84077c','4932caff0ff746eab6f01bf08b70ac45',1702204169);
+  const query = signedWbiQuery({ foo: "a!'()* b", bar: '中文' },'7cd084941338484aae1ad9425b84077c','4932caff0ff746eab6f01bf08b70ac45',1702204169);
   expect(query).toMatch(/^bar=%E4%B8%AD%E6%96%87&foo=a%20b&wts=1702204169&w_rid=[a-f0-9]{32}$/);
+});
+
+test('共用签名符合已知WBI样例，按字符升序并保持参数不可变', () => {
+  const img = '7cd084941338484aae1ad9425b84077c', sub = '4932caff0ff746eab6f01bf08b70ac45';
+  expect(signedWbiQuery({ foo: '114',bar: '514',zab: '1919810' },img,sub,1702204169))
+    .toBe('bar=514&foo=114&wts=1702204169&zab=1919810&w_rid=8f6f2b5b3d485fe1886cec6a0be8c5d4');
+  const params = { a: '中文 空格',Z: 'z',_: "!'()*",b: 'x' }, snapshot = { ...params };
+  const query = signedWbiQuery(params,img,sub,1702204169), plain = query.split('&w_rid=')[0]!;
+  expect(plain).toBe('Z=z&_=&a=%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC&b=x&wts=1702204169');
+  expect(new URLSearchParams(query).get('w_rid')).toBe(createHash('md5').update(plain+'ea1db124af3c7062474693fa704f4ff8').digest('hex'));
+  expect(params).toEqual(snapshot);
 });
 test('旧配置补齐速读默认值、备份保留新配置并拒绝无效参数', () => {
   const { quickRead, ...old } = migrateSettings();
@@ -237,7 +248,7 @@ test.each(['已勾选','未勾选','无总结','读取失败','字幕已变化']
   prefs.settings.quickRead.useVideoSummary = mode !== '未勾选';
   const value = { summary: '第二P的已有总结', points: ['核心观点'] };
   const entry = (bvid: string, page: number, summary: string, at: number) => ({ source: { bvid, page }, fingerprint: 'current',
-    summary: { value: { ...value, summary }, fingerprint: 'current', at } });
+    summary: { value: { ...value, summary, ui: { headline: '已有生成界面', blocks: [] } }, fingerprint: 'current', at } });
   const cached = { other: entry('BVother',2,'其他视频总结',100), first: entry('BVtest',1,'第一P总结',100),
     old: entry('BVtest',2,'较旧语言总结',1), latest: entry('BVtest',2,value.summary,2) };
   if (mode === '字幕已变化') { cached.old.summary.fingerprint = 'stale'; cached.latest.summary.fingerprint = 'stale'; }

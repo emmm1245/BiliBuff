@@ -2,14 +2,16 @@
 import { aiConnection } from './ai-providers';
 import { validatePlan } from './core';
 import { browseContext } from './browse-ranking';
-import { readBrowseMemory, updateBrowseMemory } from './browse-store';
+import { clearBrowseCache, readBrowseMemory, updateBrowseMemory } from './browse-store';
 import { selectBrowseBatch } from './browse-selection';
 import type { BrowseMessage, BrowseState } from './browse-types';
 import type { Preferences } from './types';
+import { beginOperation, bindTraceSignal, failureSummary } from './platform/diagnostics';
 
 export function createBrowseService(readPreferences: () => Promise<Preferences>) {
   let job: { id: string; controller: AbortController; context: string; status: string; promise: Promise<void> } | undefined;
   let lastError = '', errorContext = '';
+  let clearing: Promise<void> | undefined;
   const cooldowns = new Map<string,number>();
   async function state(): Promise<BrowseState> {
     const [prefs,memory] = await Promise.all([readPreferences(),readBrowseMemory()]);
@@ -27,15 +29,22 @@ export function createBrowseService(readPreferences: () => Promise<Preferences>)
   }
   async function generate(current: NonNullable<typeof job>) {
     const signal = AbortSignal.any([current.controller.signal,AbortSignal.timeout(6*60000)]);
-    const prefs = await readPreferences(), context = browseContext(prefs);
-    current.context = context;
+    const operation = await beginOperation('AI帮你刷', '正在挑选新一批视频');
+    bindTraceSignal(signal, operation.id);
+    let context = '';
     try {
+      const prefs = await readPreferences();
+      context = browseContext(prefs); current.context = context;
       if (!prefs.settings.browse.enabled) throw new Error('请先开启 AI帮你刷。');
       validatePlan(prefs.plan,prefs.settings.planMaxLength); aiConnection(prefs,prefs.settings.browse);
       lastError = ''; errorContext = context;
       await updateBrowseMemory(latest => ({ ...latest,pending: { id: current.id,context } }));
       lastError = await selectBrowseBatch(prefs,readPreferences,signal,text => { current.status = text; },cooldowns);
+      if (lastError) await operation.step(lastError, 'warn');
+      await operation.finish('success', lastError || '选片完成');
     } catch (error) {
+      await operation.step(signal.aborted ? '选片已停止' : failureSummary(error), signal.aborted ? 'info' : 'error');
+      await operation.finish(current.controller.signal.aborted ? 'cancelled' : 'error', current.controller.signal.aborted ? '选片已取消' : signal.aborted ? '选片超时' : '选片失败');
       errorContext = context;
       console.warn('AI帮你刷选片未完成',error);
       lastError = current.controller.signal.aborted ? '已停止选片。' : signal.aborted || (error as Error).name === 'TimeoutError' ?
@@ -43,6 +52,7 @@ export function createBrowseService(readPreferences: () => Promise<Preferences>)
     }
   }
   async function refresh(): Promise<BrowseState> {
+    if (clearing) { await clearing; return state(); }
     if (job) {
       if (!job.controller.signal.aborted) return state();
       await job.promise;
@@ -66,6 +76,16 @@ export function createBrowseService(readPreferences: () => Promise<Preferences>)
     });
     return state();
   }
+  async function clearCache() {
+    clearing ??= (async () => {
+      // 等旧任务连同收尾写入一起退出，再清空；期间不启动新的选片。
+      job?.controller.abort();
+      await job?.promise;
+      await clearBrowseCache();
+      lastError = ''; errorContext = '';
+    })().finally(() => { clearing = undefined; });
+    await clearing;
+  }
   return {
     invalidate(prefs: Preferences) { if (job && job.context && job.context !== browseContext(prefs)) job.controller.abort(); },
     async handle(message: BrowseMessage) {
@@ -74,6 +94,7 @@ export function createBrowseService(readPreferences: () => Promise<Preferences>)
         case 'browse-refresh': return refresh();
         case 'browse-feedback': return feedback(message.bvid,message.vote);
         case 'browse-cancel': job?.controller.abort(); return;
+        case 'browse-cache-clear': return clearCache();
       }
     },
   };

@@ -4,7 +4,8 @@ const tags = vi.hoisted(() => vi.fn());
 const cache = vi.hoisted(() => ({ read: vi.fn(async () => null as { tags: string[] } | null),save: vi.fn(async () => {}) }));
 vi.mock('../src/tags',() => ({ requestTags: tags }));
 vi.mock('../src/database',() => ({ cachedTags: cache.read,saveTags: cache.save }));
-import { browseDuration, browseEvidence, browseVideo, plainBrowseText, subtitleExcerpt } from '../src/browse-api';
+vi.mock('wxt/browser',() => ({ browser: { storage: { local: { get: async () => ({}),set: async () => {} } } } }));
+import { browseDuration, browseEvidence, browseSearch, browseVideo, plainBrowseText, subtitleExcerpt } from '../src/browse-api';
 import { createBrowseNetwork } from '../src/browse-network';
 import type { BrowseRequestLog } from '../src/browse-types';
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -70,7 +71,7 @@ test('实际取证链路的详情、标签、第一P播放器和字幕全部经�
   vi.useFakeTimers();
   vi.stubGlobal('fetch',vi.fn(async (url: string) => {
     if (url.includes('/view?')) return Response.json({ code: 0,data: { bvid: 'BVall',title: '教程',state: 0,aid: 1,pages: [{ cid: 2,part: '第一P',duration: 900 },{ cid: 3,part: '第二P',duration: 600 }] } });
-    if (url.includes('/tags?')) return Response.json({ code: 0,data: [{ tag_name: '教程' }] });
+    if (url.includes('/detail/tag?')) return Response.json({ code: 0,data: [{ tag_name: '教程' },{ tag_type: 'bgm',tag_name: '背景音乐' }] });
     if (url.includes('/x/player/')) return Response.json({ code: 0,data: { subtitle: { subtitles: [{ lan: 'zh',subtitle_url: 'https://aisub.hdslb.com/one.json' }] } } });
     return Response.json({ body: [{ content: '第一P字幕' }] });
   }));
@@ -94,4 +95,28 @@ test('统一预算保留已有标签缓存，命中缓存不额外请求标签�
   await vi.runAllTimersAsync(); const result = await pending;
   expect(result.tags).toEqual(['缓存标签']); expect(logs.map(log => log.kind)).toEqual(['detail','player']);
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+test.each([0,-101])('搜索使用新鲜签名的新接口，独立保留排序分页；导航业务码%s', async navCode => {
+  vi.useFakeTimers();
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    expect(init.credentials).toBe('include'); expect(init.headers).toBeUndefined();
+    return url.endsWith('/nav') ? Response.json({ code: navCode,data: {
+    wbi_img: { img_url: 'https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png',sub_url: 'https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png' } } }) :
+    Response.json({ code: 0,data: { result: [{ bvid: 'BVsearch',title: '自然光<em>人像</em>',duration: '7:20',author: '作者',pubdate: 1792310000,pic: '//i0.hdslb.com/cover.jpg',tag: '摄影,实拍' }] } });
+  });
+  vi.stubGlobal('fetch',fetch);
+  const logs: BrowseRequestLog[] = [], controller = new AbortController(), network = createBrowseNetwork(controller.signal,logs,new Map());
+  const first = browseSearch('自然光 人像','totalrank',1,controller.signal,network);
+  await vi.runAllTimersAsync();
+  expect((await first)[0]).toMatchObject({ bvid: 'BVsearch',title: '自然光人像',duration: 440,published: 1792310000,tags: ['摄影','实拍'],cover: 'https://i0.hdslb.com/cover.jpg',sources: ['search'] });
+  const second = browseSearch('自然光 人像','pubdate',2,controller.signal,network); await vi.runAllTimersAsync(); await second;
+  const calls = fetch.mock.calls;
+  expect(calls.filter(([url]) => url.endsWith('/nav'))).toHaveLength(1);
+  const url = new URL(calls[2]![0]); expect(url.pathname).toBe('/x/web-interface/wbi/search/type');
+  expect(Object.fromEntries(url.searchParams)).toMatchObject({ keyword: '自然光 人像',order: 'pubdate',page: '2',search_type: 'video' });
+  expect(url.searchParams.get('w_rid')).toMatch(/^[a-f\d]{32}$/); expect(url.searchParams.get('wts')).toMatch(/^\d+$/);
+  expect(calls[2]![0]).toContain('%20'); expect(logs.map(log => log.kind)).toEqual(['signing','search','search']);
+  expect(network.remaining).toBe(177);
+  expect(logs.every(log => log.sent)).toBe(true); expect(JSON.stringify(logs)).not.toContain('w_rid');
 });

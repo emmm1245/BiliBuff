@@ -1,5 +1,7 @@
 // 在日常功能中独立配置AI推荐开关、共用计划及选片模型。
 import type { Dispatch, SetStateAction } from 'react';
+import { useState } from 'react';
+import { send } from '../client';
 import type { Settings } from '../types';
 import type { BrowseOptions } from '../browse-types';
 import { ModelSelection } from './AIServiceSettings';
@@ -14,7 +16,16 @@ export function BrowseSettings({ draft, setDraft, plan, onEditPlan, onServices }
   onEditPlan: () => void; onServices: () => void;
 }) {
   const options = draft.browse;
+  const [clearing,setClearing] = useState(false), [status,setStatus] = useState('');
   const update = (change: Partial<BrowseOptions>) => setDraft({ ...draft, browse: { ...options,...change } });
+  async function clearCache() {
+    setClearing(true); setStatus('');
+    try {
+      await send({ type: 'browse-cache-clear' });
+      setStatus('缓存已清空，返回首页可重新选片。');
+    } catch (error) { setStatus(error instanceof Error ? error.message : '清空失败，请稍后重试。'); }
+    finally { setClearing(false); }
+  }
   return <>
     <Card className={styles.card}>
       <label className={styles.switch}><input type="checkbox" role="switch" checked={options.enabled} onChange={event => update({ enabled: event.target.checked })} />开启 AI帮你刷</label>
@@ -32,6 +43,13 @@ export function BrowseSettings({ draft, setDraft, plan, onEditPlan, onServices }
           <option value="off">关</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
         </select></label>}
       </div></details>
+    </Card>
+    <Card className={styles.card}>
+      <h2>实验性功能</h2>
+      <p className={styles.notice}>清除当前推荐、待推荐候选池、展示记录、搜索记忆和从计划提炼的选片理解，下次重新选片。旧视频可能再次出现。</p>
+      <p className={styles.notice}>保留赞踩、日志、来源冷却时间、近期计划及所有配置。正在进行的选片会先停止。</p>
+      <Button disabled={clearing} onClick={() => void clearCache()}>{clearing ? '正在清空…' : '清空缓存'}</Button>
+      {status && <p role="status">{status}</p>}
     </Card>
   </>;
 }

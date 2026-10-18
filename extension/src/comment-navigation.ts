@@ -1,4 +1,20 @@
 // 通过原站评论组件的属性入口在当前视频定位并高亮评论，不导航或重建播放器。
+let clearHighlight: (() => void) | undefined;
+function highlight(target: HTMLElement) {
+  const styles = {
+    outline: '2px solid #fb7299',
+    'outline-offset': '3px',
+    'border-radius': '8px',
+    'box-shadow': '0 0 8px #fb729999, 0 0 22px #fb729966, inset 0 0 10px #fb729926',
+  };
+  const original = Object.keys(styles).map(name => [name,target.style.getPropertyValue(name),target.style.getPropertyPriority(name)] as const);
+  for (const [name,value] of Object.entries(styles)) target.style.setProperty(name,value,'important');
+  clearHighlight = () => {
+    for (const [name,value,priority] of original) {
+      if (value) target.style.setProperty(name,value,priority); else target.style.removeProperty(name);
+    }
+  };
+}
 function shadowRoots(host: Element): ShadowRoot[] {
   const root = host.shadowRoot;
   return root ? [root,...[...root.querySelectorAll('*')].flatMap(shadowRoots)] : [];
@@ -25,6 +41,8 @@ export async function jumpToComment(id: string, signal: AbortSignal) {
   const original = ['seek-id','lazy-load'].map(name => [name,host.getAttribute(name)] as const);
   try {
     signal.throwIfAborted();
+    clearHighlight?.();
+    clearHighlight = undefined;
     host.setAttribute('seek-id',id);
     host.removeAttribute('lazy-load');
     // 两次属性更新分开提交，让原站清空评论列表，再按定位编号读取目标楼层。
@@ -40,6 +58,7 @@ export async function jumpToComment(id: string, signal: AbortSignal) {
     }
     if (!target) throw new Error('未找到目标评论，可能已删除、不可见或加载失败，请稍后重试。');
     await delay(400,signal);
+    highlight(target);
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
   } finally {
     if (host.getAttribute('data-params') === '0,0') host.setAttribute('data-params',params);

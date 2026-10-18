@@ -52,7 +52,6 @@ export function SettingsNavigation({ tab, onChange }: { tab: Tab; onChange: (val
   }
 
   return <nav className={styles.nav} aria-label="设置导航">
-    <p className={styles.navHint}>拖动栏目调整组内顺序</p>
     {navigationGroups.map(group => {
       const tabs = order.filter(value => group.tabs.includes(value));
       return <div className={styles.navGroup} key={group.label}>

@@ -14,6 +14,12 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: 3.0.70
         version: 3.0.70(zod@4.6.7)
+      '@json-render/core':
+        specifier: ^0.21.1
+        version: 0.21.1(zod@4.6.7)
+      '@json-render/react':
+        specifier: ^0.21.1
+        version: 0.21.1(react@19.3.0)(zod@4.6.7)
       '@lobehub/icons-static-svg':
         specifier: ^1.95.1
         version: 1.95.1
@@ -344,6 +350,16 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@json-render/core@0.21.1':
+    resolution: {integrity: sha512-5hUxJTOnNlBhLuSzS/Vs46jjAqQ2TnkGz9n/0RW2djYwxANZKhOTc1QOuL1Cgu+HxtfTPdJjzUs5dOei/Y+aag==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@json-render/react@0.21.1':
+    resolution: {integrity: sha512-xuK67UzMhKCwGlB48Y22BfPsPxwKy+xLq+fK8dG0jCJyE8SKT/WCLReOEG0+rRzGZo5gcIbjC+3r6fcbtNt16w==}
+    peerDependencies:
+      react: ^19.2.3
 
   '@keyv/bigmap@1.3.1':
     resolution: {integrity: sha512-WbzE9sdmQtKy8vrNPa9BRnwZh5UF4s1KTmSK0KUVLo3eff5BlQNNWDnFOouNpKfPKDnms9xynJjsMYjMaT/aFQ==}
@@ -3406,6 +3422,17 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  '@json-render/core@0.21.1(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
+
+  '@json-render/react@0.21.1(react@19.3.0)(zod@4.6.7)':
+    dependencies:
+      '@json-render/core': 0.21.1(zod@4.6.7)
+      react: 19.3.0
+    transitivePeerDependencies:
+      - zod
 
   '@keyv/bigmap@1.3.1(keyv@5.6.0)':
     dependencies:

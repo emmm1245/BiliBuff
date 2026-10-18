@@ -13,6 +13,9 @@ export function clearBrowseLogs() {
   return updateBrowseMemory(memory => ({ ...memory,logs: [] }));
 }
 const empty = (): BrowseMemory => ({ context: '', items: [], updatedAt: 0, round: 0, queries: [], seen: [], feedback: [] });
+export function clearBrowseCache() {
+  return updateBrowseMemory(memory => ({ ...empty(),feedback: memory.feedback,logs: memory.logs,sourceCooldowns: memory.sourceCooldowns }));
+}
 export async function readBrowseMemory(): Promise<BrowseMemory> {
   await writes;
   return (await browser.storage.local.get(BROWSE_KEY))[BROWSE_KEY] as BrowseMemory | undefined ?? empty();

@@ -14,6 +14,7 @@ import { aiConnection, validateProviderKeys } from '../ai-providers';
 import { createCommentService } from '../comment-service';
 import type { QuickReadProgress } from '../comment-types';
 import { allDebugLogs, clearDebugLogs, debugState, setDebugEnabled } from '../ai-debug';
+import { biliClient } from '../bili-client';
 import { createVideoService } from '../video-service';
 import { registerVideoDownloads } from '../video-download';
 import type { VideoProgress } from '../video-types';
@@ -21,6 +22,8 @@ import { defaultVideoOptions } from '../video-ai';
 import type { VideoSelection } from '../video-types';
 import { createBrowseService } from '../browse-service';
 import { clearBrowseLogs, readBrowseMemory } from '../browse-store';
+import { allOperations, beginOperation, clearOperations, operationFamily, safeLogText } from './diagnostics';
+import { debugLog } from './ai-logs';
 
 export const PREFERENCES_KEY = 'preferences';
 export function startBackground() {
@@ -76,7 +79,7 @@ export function startBackground() {
   async function handle(message: Message, progress: (value: QuickReadProgress | VideoProgress) => void, owner: string): Promise<unknown> {
     await initialized;
     switch (message.type) {
-      case 'browse-state': case 'browse-refresh': case 'browse-feedback': case 'browse-cancel': return browse.handle(message);
+      case 'browse-state': case 'browse-refresh': case 'browse-feedback': case 'browse-cancel': case 'browse-cache-clear': return browse.handle(message);
       case 'video-source': case 'video-subtitles': case 'video-selection': case 'video-cache-clear': case 'video-analyze': case 'video-cancel': case 'video-media': case 'video-download':
         return videos(message,progress,owner);
       case 'comments-source': case 'comments-page': case 'comments-cache': case 'comments-analyze': case 'comments-cancel': return comments(message,progress);
@@ -112,16 +115,28 @@ export function startBackground() {
         return { preferences: await preferences(), counts: await counts(),
           sampleCounts: { watched: pool.watched.length, blocked: pool.blocked.length }, reviewError: reviewer.error() };
       }
-      case 'debug-state': return debugState();
+      case 'debug-state': return { ...await debugState(), operations: (await allOperations()).length };
+      case 'debug-list': return allOperations();
+      case 'debug-detail': return debugLog(message.id);
       case 'debug-toggle':
         if (typeof message.enabled !== 'boolean') throw new Error('调试日志开关无效。');
         await setDebugEnabled(message.enabled);
         return;
       case 'debug-export': {
         const memory = await readBrowseMemory();
-        return { format: 'bilibili-focus-debug',version: 1,exportedAt: new Date().toISOString(),logs: await allDebugLogs(),browseRounds: memory.logs ?? [] };
+        const all = await allOperations(), operations = message.operationId ? operationFamily(all, message.operationId) : all;
+        const ids = new Set(operations.map(log => log.id));
+        const logs = await allDebugLogs(), network = await biliClient.diagnostics();
+        return { format: 'bilibili-focus-debug',version: 2,exportedAt: new Date().toISOString(),
+          environment: { extensionVersion: browser.runtime.getManifest().version, browser: navigator.userAgent },
+          operations, logs: message.operationId ? logs.filter(log => ids.has(log.operationId ?? log.id)) : logs,
+          browseRounds: message.operationId ? (memory.logs ?? []).filter(log => ids.has(log.operationId ?? '')) : memory.logs ?? [],
+          biliNetwork: { logs: message.operationId ? network.logs.filter(log => ids.has(log.operationId ?? '')) : network.logs,
+            cooldowns: message.operationId ? {} : network.cooldowns } };
       }
-      case 'debug-clear': await Promise.all([clearDebugLogs(),clearBrowseLogs()]); return;
+      case 'debug-clear':
+        await clearOperations();
+        await Promise.all([clearDebugLogs(),clearBrowseLogs(),biliClient.clearLogs()]); return;
       case 'samples': {
         const prefs = await preferences();
         const target = message.counts?.blocked ?? prefs.settings.minBlocked;
@@ -190,7 +205,25 @@ export function startBackground() {
     const progress = (value: QuickReadProgress | VideoProgress) => {
       if (sender.tab?.id !== undefined) void browser.tabs.sendMessage(sender.tab.id,value,{ frameId: sender.frameId ?? 0 }).catch(() => {});
     };
-    void Promise.resolve().then(() => handle(parseMessage(message),progress,`${sender.tab?.id ?? 'settings'}:${sender.frameId ?? 0}`)).then(value => respond({ ok: true, value }), error => respond({ ok: false, error: error instanceof Error ? error.message : '扩展操作失败。' }));
+    void Promise.resolve().then(async () => {
+      const parsed = parseMessage(message);
+      const labels: Record<string, string> = { save: '保存设置', plan: '保存计划', import: '导入备份', export: '导出备份',
+        'video-source': '读取视频信息', 'video-subtitles': '读取字幕', 'video-media': '读取下载资源', 'video-download': '提交视频下载',
+        'video-cache-clear': '清除视频缓存', 'browse-cache-clear': '清除选片缓存', 'comments-source': '读取评论来源' };
+      const label = labels[parsed.type];
+      const operation = label ? await beginOperation('系统与数据', label) : undefined;
+      try {
+        const value = await handle(parsed,progress,`${sender.tab?.id ?? 'settings'}:${sender.frameId ?? 0}`);
+        await operation?.finish('success', `${label}完成`);
+        return value;
+      } catch (error) {
+        if (operation) {
+          await operation.step(safeLogText(error), 'error');
+          await operation.finish('error', `${label}失败`);
+        }
+        throw error;
+      }
+    }).then(value => respond({ ok: true, value }), error => respond({ ok: false, error: error instanceof Error ? error.message : '扩展操作失败。' }));
     return true;
   });
   browser.action.onClicked.addListener(() => { void browser.runtime.openOptionsPage(); });

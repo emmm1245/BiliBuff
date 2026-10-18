@@ -2,11 +2,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { browser } from 'wxt/browser';
-import { RefreshCw, Settings2, ThumbsDown, ThumbsUp, X } from 'lucide-react';
+import { RefreshCw, Settings2, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { send } from './client';
 import type { BrowseState } from './browse-types';
 
 interface Actions { refresh: () => void; cancel: () => void; settings: () => void; vote: (bvid: string, vote: 1 | -1 | 0) => void }
+const loadingMessages = ['正在为你挑选视频…', '正在片海里捞点好东西…', '给你的兴趣雷达充个电…', '翻翻收藏级好片，马上回来…', '让好内容和你碰个面…'];
 function duration(seconds: number) {
   if (!seconds) return '';
   const minutes = Math.floor(seconds/60), rest = String(seconds%60).padStart(2,'0');
@@ -21,13 +22,18 @@ function publishedDate(seconds: number) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 }
 export function BrowseHomeView({ state, actions, voting = '' }: { state: BrowseState; actions: Actions; voting?: string }) {
+  const [loadingIndex,setLoadingIndex] = useState(0);
+  useEffect(() => {
+    if (!state.busy) { setLoadingIndex(0); return; }
+    const timer = window.setInterval(() => setLoadingIndex(index => (index+1)%loadingMessages.length),4000);
+    return () => clearInterval(timer);
+  },[state.busy]);
   return <section className="browse" aria-label="AI帮你刷" aria-busy={state.busy}>
     <div className="browse-heading"><h2>AI帮你刷</h2><div className="browse-tools">
-      <button type="button" disabled={!state.ready || state.busy} onClick={actions.refresh}><RefreshCw size={15} aria-hidden="true" />{state.items.length ? '换一批' : '开始选片'}</button>
-      {state.busy && <button type="button" onClick={actions.cancel}><X size={15} aria-hidden="true" />停止</button>}
+      <button type="button" disabled={!state.ready && !state.busy} onClick={state.busy ? actions.cancel : actions.refresh}><RefreshCw className={state.busy ? 'browse-spinning' : undefined} size={15} aria-hidden="true" />{state.busy ? '取消' : state.items.length ? '换一批' : '开始选片'}</button>
       <button type="button" onClick={actions.settings} aria-label="AI帮你刷设置" title="AI帮你刷设置"><Settings2 size={17} aria-hidden="true" /></button>
     </div></div>
-    {state.busy && <p className="browse-status" role="status">{state.status || '正在为你挑选视频…'}</p>}
+    {state.busy && <p className="browse-status" role="status">{loadingMessages[loadingIndex]}</p>}
     {state.error && <p className="browse-error" role="status">{state.error}</p>}
     {!state.busy && !state.error && !state.items.length && <p className="browse-status">准备好后，来找点感兴趣的。</p>}
     <div className="browse-grid">{state.items.map(video => <article className={`browse-card${video.vote === -1 ? ' browse-disliked' : ''}`} key={video.bvid}>

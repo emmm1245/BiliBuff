@@ -10,6 +10,16 @@ import { CommentCard, type CommentCardActions, type CommentCardState } from '../
 import { VideoChat } from '../src/ui/ai/VideoChat';
 const videoActions: VideoPanelActions = { density: vi.fn(), read: vi.fn(), language: vi.fn(), analyze: vi.fn(), cancel: vi.fn(), seek: vi.fn(), export: vi.fn(), media: vi.fn(), download: vi.fn(), clear: vi.fn(), settings: vi.fn() };
 const commentActions: CommentCardActions = { collect: vi.fn(), pause: vi.fn(), analyze: vi.fn(), cancel: vi.fn(), copy: vi.fn(), download: vi.fn(), settings: vi.fn(), jump: vi.fn(), context: vi.fn() };
+
+test('旧文字总结无需重新生成即可显示原正文和旧重点', () => {
+  const source = { bvid: 'BVtest', aid: 1, cid: 1, page: 1, title: '视频', part: '', duration: 30, parts: [], tracks: [] };
+  const state: VideoPanelState = { source, cache: { source, rows: [], language: 'zh', fingerprint: 'old', at: 1, answers: [],
+    summary: { value: { summary: '旧版原始总结', points: ['旧版重点'] }, fingerprint: 'old', at: 1, selection: { providerId: 'deepseek', model: 'test' } } },
+    media: [], busy: false, task: null, status: '', error: '', preview: '', question: '', mediaLoading: false, mediaError: '' };
+  const html = renderToStaticMarkup(createElement(VideoPanel,{ state, actions: videoActions }));
+  expect(html).toContain('旧版原始总结'); expect(html).toContain('旧版重点');
+  expect(html).not.toContain('generative-summary'); expect(videoActions.analyze).not.toHaveBeenCalled();
+});
 test('实际视频面板保留五分页与键盘焦点入口，没有字幕也显示官方章节', () => {
   const state: VideoPanelState = { source: { bvid: 'BVtest', aid: 1, cid: 1, page: 1, title: '视频', part: '', duration: 30, parts: [], tracks: [],
     nativeChapters: [{ start: 0, end: 30, title: '官方章节', summary: '', ad: false }] }, cache: null, media: [], busy: false, task: null, status: '', error: '', preview: '', question: '', mediaLoading: false, mediaError: '' };
@@ -70,7 +80,7 @@ test('章节增量显示标题与说明，不提供跳转和跳广告操作', ()
 test.each(['summary','chapters','chat'] as const)('视频%s生成中仅保留一个可用取消入口，隐藏当前任务的次要操作', task => {
   const state: VideoPanelState = { source: null, cache: null, media: [], busy: false, task, status: '测试状态：当前任务进行中', error: '', preview: '', question: '', mediaLoading: false, mediaError: '' };
   const html = renderToStaticMarkup(createElement(VideoPanel,{ state, actions: videoActions }));
-  expect(html).not.toContain(state.status);
+  expect(html.split(state.status).length-1).toBe(task === 'summary' ? 1 : 0);
   const cancels = html.match(/<button\b[^>]*class="[^"]*\bcancel\b[^"]*"[^>]*>/g) ?? [];
   expect(cancels).toHaveLength(1);
   expect(cancels[0]).not.toMatch(/\b(?:disabled|hidden)=""/);

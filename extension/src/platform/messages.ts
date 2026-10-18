@@ -7,6 +7,9 @@ import type { ChapterDensity, MediaChoice, VideoAssistantOptions, VideoCache, Vi
 import type { AIDebugLog } from '../ai-debug';
 import type { Theme } from '../theme';
 import type { BrowseState } from '../browse-types';
+import type { BiliRequestLog } from '../bili-client';
+import type { OperationLog } from './diagnostics';
+import type { BrowseRoundLog } from '../browse-types';
 
 const text = z.string();
 const bvid = text.regex(/^BV\w+$/);
@@ -18,9 +21,11 @@ const comment = z.object({ id: text.regex(/^\d+$/), root: text, parent: text, au
 // 设置、建议和备份沿用各业务保存边界的完整校验，避免在传输边界提前丢失旧字段默认值与空密钥语义。
 export const messageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('suggest'), term: text.max(100) }),
-  ...(['browse-state','browse-refresh','browse-cancel'] as const).map(type => z.object({ type: z.literal(type) })),
+  ...(['browse-state','browse-refresh','browse-cancel','browse-cache-clear'] as const).map(type => z.object({ type: z.literal(type) })),
   z.object({ type: z.literal('browse-feedback'), bvid, vote: z.union([z.literal(1),z.literal(-1),z.literal(0)]) }),
-  ...(['theme','rules','snapshot','debug-state','debug-export','debug-clear','video-selection'] as const).map(type => z.object({ type: z.literal(type) })),
+  ...(['theme','rules','snapshot','debug-state','debug-clear','debug-list','video-selection'] as const).map(type => z.object({ type: z.literal(type) })),
+  z.object({ type: z.literal('debug-export'), operationId: requestId.optional() }),
+  z.object({ type: z.literal('debug-detail'), id: requestId }),
   z.object({ type: z.literal('samples'), counts: z.object({ watched: z.number().int().min(0).max(100), blocked: z.number().int().min(0).max(1000) }).optional() }),
   z.object({ type: z.literal('open-settings'), section: z.enum(['videoAssistant','browse','home']).optional() }),
   z.object({ type: z.literal('tags'), bvid }),
@@ -53,10 +58,13 @@ export function parseMessage(value: unknown): Message {
   return parsed.data as Message;
 }
 export interface MessageResults {
-  'browse-state': BrowseState; 'browse-refresh': BrowseState; 'browse-cancel': void; 'browse-feedback': BrowseState;
+  'browse-state': BrowseState; 'browse-refresh': BrowseState; 'browse-cancel': void; 'browse-feedback': BrowseState; 'browse-cache-clear': void;
   suggest: string[]; theme: Theme; rules: ContentSettings; 'open-settings': unknown; tags: string[]; review: ReviewVerdict; record: unknown;
-  snapshot: Snapshot; 'debug-state': { enabled: boolean; count: number }; 'debug-toggle': void; 'debug-clear': void;
-  'debug-export': { format: string; version: number; exportedAt: string; logs: AIDebugLog[] };
+  snapshot: Snapshot; 'debug-state': { enabled: boolean; count: number; operations: number }; 'debug-toggle': void; 'debug-clear': void;
+  'debug-list': OperationLog[];
+  'debug-detail': AIDebugLog | null;
+  'debug-export': { format: string; version: number; exportedAt: string; environment: { extensionVersion: string; browser: string };
+    operations: OperationLog[]; logs: AIDebugLog[]; browseRounds: BrowseRoundLog[]; biliNetwork: { logs: BiliRequestLog[]; cooldowns: Record<string,number> } };
   save: Preferences; plan: void; samples: { watched: VideoEvent[]; blocked: VideoEvent[] }; result: AnalysisResult; export: Backup; import: void;
   'comments-source': VideoCommentsSource; 'comments-page': CommentPage; 'comments-cache': QuickReadResult | null; 'comments-analyze': QuickReadResult; 'comments-cancel': void; 'comments-context': boolean;
   'video-density': ChapterDensity; 'video-source': VideoSource; 'video-subtitles': VideoCache; 'video-selection': VideoAssistantOptions; 'video-cache-clear': void;

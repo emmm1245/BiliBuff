@@ -12,9 +12,12 @@ import { Input } from './ui/primitives/input';
 import { Icon } from './ui/Icon';
 import { Markdown } from './ui/ai/Markdown';
 import { VideoChat } from './ui/ai/VideoChat';
+import { VideoSummary } from './ui/ai/VideoSummary';
+import type { SummaryPreview } from './video-summary';
 export interface VideoPanelState {
   source: VideoSource | null; cache: VideoCache | null; media: MediaChoice[]; busy: boolean; task: VideoTask | null;
   chaptersPreview?: ChapterPreview; chapterDensity?: ChapterDensity;
+  summaryPreview?: SummaryPreview;
   status: string; error: string; preview: string; question: string; mediaLoading: boolean; mediaError: string;
 }
 export interface VideoPanelActions {
@@ -30,7 +33,7 @@ const tabs = { subtitles: '字幕', summary: '总结', chapters: '章节', chat:
 type Tab = keyof typeof tabs;
 function Empty({ children }: { children: string }) { return <div className="empty"><Icon name="tv" /><p>{children}</p></div>; }
 export function VideoPanel({ state, actions, ref }: { state: VideoPanelState; actions: VideoPanelActions; ref?: Ref<PanelHandle> }) {
-  const { source, cache, busy, task, preview } = state;
+  const { source, cache, busy, task } = state;
   const [tab, setTab] = useState<Tab>('subtitles');
   const [search, setSearch] = useState('');
   const [question, setQuestion] = useState('');
@@ -73,7 +76,7 @@ export function VideoPanel({ state, actions, ref }: { state: VideoPanelState; ac
         <div className="exports"><select className="format" aria-label="字幕导出格式" value={format} onChange={event => setFormat(event.target.value as typeof format)}><option value="timed">带时间戳</option><option value="text">纯文本</option><option value="srt">SRT 字幕</option></select><Button className="copy" disabled={!cache} onClick={() => actions.export(format,true)}>复制</Button><Button className="export" disabled={!cache} onClick={() => actions.export(format,false)}>导出</Button></div>
       </section>
       <section id="bb-video-pane-summary" aria-labelledby="bb-video-tab-summary" className="pane" data-pane="summary" role="tabpanel" hidden={tab !== 'summary'}><div className="pane-heading"><div><h3>视频总结</h3></div></div><div className="toolbar"><Button className={`generate-summary ${task === 'summary' ? 'cancel' : 'primary'}`} disabled={task !== 'summary' && (!cache || !!task)} onClick={() => task === 'summary' ? actions.cancel() : actions.analyze('summary')}>{task === 'summary' ? '取消生成' : cache?.summary ? '重新生成总结' : '生成总结'}</Button>{task !== 'summary' && <div className="secondary-actions"><Button className="copy-summary link" disabled={!cache?.summary} onClick={() => actions.export('summary',true)}>复制</Button><Button className="export-summary link" disabled={!cache?.summary} onClick={() => actions.export('summary',false)}>导出</Button></div>}</div>
-        <Card key={task === 'summary' ? 'generating' : cache?.summary?.at ?? 'empty'} className={`content-card summary-result result${cache?.summary && task !== 'summary' ? ' bb-result-reveal' : ''}`}>{task === 'summary' ? <Markdown text={preview} streaming /> : cache?.summary ? <><Markdown text={cache.summary.value.summary} />{cache.summary.value.points.length > 0 && <ul>{cache.summary.value.points.map((text,index) => <li key={index}>{text}</li>)}</ul>}</> : <Empty>一份总结，快速掌握重点</Empty>}</Card>
+        <Card key={task === 'summary' ? 'generating' : cache?.summary?.at ?? 'empty'} className={`content-card summary-result result${cache?.summary && task !== 'summary' ? ' bb-result-reveal' : ''}`}>{task === 'summary' ? <VideoSummary value={state.summaryPreview} rows={cache?.rows ?? []} seek={actions.seek} streaming status={state.status} /> : cache?.summary?.value.ui ? <VideoSummary value={cache.summary.value.ui} rows={cache.rows} seek={actions.seek} /> : cache?.summary ? <><Markdown text={cache.summary.value.summary} />{cache.summary.value.points.length > 0 && <ul>{cache.summary.value.points.map((text,index) => <li key={index}>{text}</li>)}</ul>}</> : <Empty>一份总结，快速掌握重点</Empty>}</Card>
       </section>
       <section id="bb-video-pane-chapters" aria-labelledby="bb-video-tab-chapters" className="pane" data-pane="chapters" role="tabpanel" hidden={tab !== 'chapters'}><div className="pane-heading"><div><h3>章节导航</h3><span className="muted">{source?.nativeChapters?.length ? '此为视频自带章节' : '按话题定位，按需选择分段密度'}</span></div>{!!timeline.length && <span className="count-badge">{timeline.length} 章</span>}</div><div className="toolbar" hidden={!!source?.nativeChapters?.length}>
           <Button className={`generate-chapters ${task === 'chapters' ? 'cancel' : 'primary'}`} disabled={task !== 'chapters' && (!cache || !!task)} onClick={() => task === 'chapters' ? actions.cancel() : actions.analyze('chapters')}>{task === 'chapters' ? '取消生成' : cache?.chapters ? '重新生成章节' : '生成章节'}</Button>
