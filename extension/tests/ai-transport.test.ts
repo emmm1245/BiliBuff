@@ -123,3 +123,12 @@ test('结构化数组未完成时已推送字段增量，完整校验前不消�
   expect(await task).toMatchObject({ suggestions: [{ word: '数学', reason: '学习目标' }] });
   expect(consume).toHaveBeenCalledTimes(1);
 });
+
+test('实际SDK返回的用量可计入选片诊断，不把估算当作实际Token', async () => {
+  const usage = vi.fn();
+  const tokens = `data: ${JSON.stringify({ choices: [],usage: { prompt_tokens: 12,completion_tokens: 5,total_tokens: 17 } })}\n\n`;
+  vi.stubGlobal('fetch',vi.fn(async () => response(event('{"summary":"结果","suggestions":[]}','stop')+tokens+'data: [DONE]\n\n')));
+  await requestAI(prefs,prefs.settings.ai,{ stream: true,messages: [{ role: 'user',content: '离线输入' }] },new AbortController().signal,
+    value => validateSuggestions(value),'AI帮你刷',{ schema: suggestionsSchema,usage });
+  expect(usage).toHaveBeenCalledOnce(); expect(usage.mock.calls[0]![0]).toMatchObject({ inputTokens: 12,outputTokens: 5 });
+});

@@ -17,7 +17,7 @@ export function migrateSettings(old: { topics?: string; blocked?: string; tags?:
     homeSearch: false, homeWallpaper: '', minWatched: 10, minBlocked: 100, autoSamples: false, analysisMode: 'general',
     ai: { model: 'deepseek-flash', thinking: false, effort: 'high', maxTokens: 65536 },
     providers: [{ ...DEEPSEEK }],
-    browse: { enabled: false, providerId: 'deepseek', model: 'deepseek-v4-pro', thinking: true, effort: 'high', maxTokens: 8192 },
+    browse: { enabled: false, providerId: 'deepseek', model: 'deepseek-v4-pro', thinking: true, effort: 'high', maxTokens: 8192,scopeNote: '' },
     review: { enabled: false, mode: 'general', workspaceId: '' },
     quickRead: { auto: false, autoMinutes: 3, useVideoSummary: false, limit: 1000, valuableCount: 5, providerId: 'deepseek', model: 'deepseek-flash' }, videoAssistant: defaultVideoOptions(), planMaxLength: 100,
   };
@@ -134,7 +134,8 @@ export function validateSettings(value: unknown): Settings {
   settings.providers = validateProviders(settings.providers);
   const browse = object(settings.browse);
   if (typeof browse.enabled !== 'boolean') throw new Error('AI帮你刷开关无效。');
-  settings.browse = { ...validateAIOptions(browse), enabled: browse.enabled };
+  if (browse.scopeNote !== undefined && (typeof browse.scopeNote !== 'string' || browse.scopeNote.length > 1000)) throw new Error('推荐范围补充最多1000字。');
+  settings.browse = { ...validateAIOptions(browse), enabled: browse.enabled,scopeNote: typeof browse.scopeNote === 'string' ? browse.scopeNote.trim() : '' };
   if (!settings.providers.some(provider => provider.id === settings.browse.providerId)) throw new Error('请重新选择 AI帮你刷使用的服务。');
   const video = object(settings.videoAssistant);
   for (const flag of ['autoSummary','autoChapters','autoSkipAds'] as const) if (typeof video[flag] !== 'boolean') throw new Error('视频助手自动功能开关无效。');

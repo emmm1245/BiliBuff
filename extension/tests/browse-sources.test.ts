@@ -4,7 +4,7 @@ import { createBrowseSources } from '../src/browse-sources';
 import type { BrowseSourceAttempt } from '../src/browse-types';
 
 afterEach(() => vi.useRealTimers());
-test('412最多补试两次，失败后同来源冷却，其他来源仍可使用', async () => {
+test('412立即冷却，同来源不继续补试，其他来源仍可使用', async () => {
   vi.useFakeTimers();
   const logs: BrowseSourceAttempt[] = [], cooldowns = new Map<string,number>();
   const sources = createBrowseSources(new AbortController().signal,logs,cooldowns);
@@ -12,7 +12,7 @@ test('412最多补试两次，失败后同来源冷却，其他来源仍可使�
   const pending = sources.collect('搜索','search',request);
   await vi.runAllTimersAsync(); await pending;
   await sources.collect('其他搜索','search',request);
-  expect(request).toHaveBeenCalledTimes(3); expect(logs.map(item => item.attempt)).toEqual([1,2,3]);
+  expect(request).toHaveBeenCalledOnce(); expect(logs.map(item => item.attempt)).toEqual([1,0]);
   expect(cooldowns.get('search')).toBeGreaterThan(Date.now());
   const home = vi.fn().mockResolvedValue([]); await sources.collect('首页','home',home);
   expect(home).toHaveBeenCalledOnce();
@@ -28,7 +28,7 @@ test('临时错误恢复后返回内容，整轮最多24次来源请求', async 
 });
 test('取消会结束退避等待，不发送下一次请求', async () => {
   vi.useFakeTimers();
-  const controller = new AbortController(), request = vi.fn().mockRejectedValue(new Error('HTTP 412'));
+  const controller = new AbortController(), request = vi.fn().mockRejectedValue(new Error('HTTP 503'));
   const sources = createBrowseSources(controller.signal,[],new Map());
   const pending = sources.collect('搜索','search',request);
   const check = expect(pending).rejects.toThrow();

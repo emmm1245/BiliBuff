@@ -1,7 +1,9 @@
 // 读取B站候选、完整分P目录和时长，只抽样第一P字幕作为内容证据。
 import { requestTags } from './tags';
+import { cachedTags, saveTags } from './database';
 import { subtitleResource } from './video-api';
 import type { BrowseEvidence, BrowseVideo } from './browse-types';
+import { BrowseRequestError, type BrowseNetwork } from './browse-network';
 
 interface RawVideo {
   bvid?: string; title?: string; author?: string; mid?: number; owner?: { name: string; mid: number };
@@ -32,7 +34,8 @@ export function browseVideo(value: RawVideo, source: BrowseVideo['sources'][numb
     published: value.pubdate ?? 0, description: plainBrowseText(value.desc || value.description).slice(0,2000),
     tags: (value.tag ?? '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0,20), sources: [source] };
 }
-async function json<T>(path: string, signal: AbortSignal): Promise<T> {
+async function json<T>(path: string, signal: AbortSignal, network?: BrowseNetwork): Promise<T> {
+  if (network) return network.data<T>(path);
   const response = await fetch(`https://api.bilibili.com${path}`,{ credentials: 'include', signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]) });
   if (!response.ok) throw new Error(`B站读取失败（${response.status}）。`);
   const result = await response.json();
@@ -42,28 +45,37 @@ async function json<T>(path: string, signal: AbortSignal): Promise<T> {
 function videos(items: RawVideo[], source: BrowseVideo['sources'][number]) {
   return items.map(item => browseVideo(item,source)).filter((item): item is BrowseVideo => item !== null);
 }
-export async function browseHome(signal: AbortSignal) {
-  const data = await json<{ item: RawVideo[] }>('/x/web-interface/wbi/index/top/feed/rcmd?fresh_type=3&ps=20',signal);
+export async function browseHome(signal: AbortSignal, network?: BrowseNetwork) {
+  const data = await json<{ item: RawVideo[] }>('/x/web-interface/wbi/index/top/feed/rcmd?fresh_type=3&ps=20',signal,network);
   return videos(data.item,'home');
 }
-export async function browseSearch(keyword: string, order: 'totalrank' | 'pubdate', page: number, signal: AbortSignal) {
+export async function browseSearch(keyword: string, order: 'totalrank' | 'pubdate', page: number, signal: AbortSignal, network?: BrowseNetwork) {
   const params = new URLSearchParams({ search_type: 'video', keyword, order, page: String(page) });
-  const data = await json<{ result: RawVideo[] }>(`/x/web-interface/search/type?${params}`,signal);
+  const data = await json<{ result: RawVideo[] }>(`/x/web-interface/search/type?${params}`,signal,network);
+  if (!Array.isArray(data?.result)) throw new BrowseRequestError('搜索响应缺少视频列表。','invalid');
   return videos(data.result,'search');
 }
-export async function browseRelated(bvid: string, signal: AbortSignal) {
-  return videos(await json<RawVideo[]>(`/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`,signal),'related');
+export async function browseRelated(bvid: string, signal: AbortSignal, network?: BrowseNetwork) {
+  return videos(await json<RawVideo[]>(`/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`,signal,network),'related');
 }
 export function subtitleExcerpt(rows: { content: string }[]) {
   // 均匀抽取整段字幕，不把开场白当作全部内容；明确保留抽样范围。
   const count = Math.min(rows.length,60);
   return Array.from({ length: count },(_,i) => rows[Math.floor(i*(rows.length-1)/Math.max(1,count-1))]!.content.slice(0,90)).join('\n');
 }
-export async function browseEvidence(video: BrowseVideo, signal: AbortSignal): Promise<BrowseEvidence> {
-  const data = await json<RawVideo & { aid: number; pages: { cid: number; part: string; duration?: number }[]; state: number; rights?: { pay?: number }; is_upower_exclusive?: boolean }>(`/x/web-interface/view?bvid=${video.bvid}`,signal);
+export async function browseEvidence(video: BrowseVideo, signal: AbortSignal, network?: BrowseNetwork): Promise<BrowseEvidence> {
+  const data = await json<RawVideo & { aid: number; pages: { cid: number; part: string; duration?: number }[]; state: number; rights?: { pay?: number }; is_upower_exclusive?: boolean }>(`/x/web-interface/view?bvid=${video.bvid}`,signal,network);
   if (data.state < 0 || data.rights?.pay || data.is_upower_exclusive) throw new Error('视频不可用或需要额外付费。');
   // 标签失败不应丢弃仍有完整简介和目录的视频。
-  const tags = await new Promise<string[]>((resolve,reject) => {
+  let tags: string[];
+  if (network) {
+    const cached = await cachedTags(video.bvid).catch(() => null);
+    tags = cached ? cached.tags : await network.data<{ tag_name: string }[]>(`/x/tag/archive/tags?bvid=${video.bvid}`).then(async items => {
+      const names = items.map(item => item.tag_name);
+      await saveTags(video.bvid,names).catch(() => {});
+      return names;
+    }).catch(() => video.tags);
+  } else tags = await new Promise<string[]>((resolve,reject) => {
     signal.throwIfAborted();
     const aborted = () => reject(signal.reason);
     signal.addEventListener('abort',aborted,{ once: true });
@@ -76,13 +88,18 @@ export async function browseEvidence(video: BrowseVideo, signal: AbortSignal): P
   const evidence: BrowseEvidence = { ...detail,partCount: chapters.length,parts: chapters.map(part => part.title),chapters,excerpt: '',coverage: '视频简介、标签、完整分P标题和各P时长；尚未核验字幕' };
   if (!data.pages[0]) return evidence;
   try {
-    const player = await json<{ subtitle?: { subtitles?: { lan: string; subtitle_url: string }[] } }>(`/x/player/wbi/v2?aid=${data.aid}&cid=${data.pages[0].cid}`,signal);
+    const player = await json<{ subtitle?: { subtitles?: { lan: string; subtitle_url: string }[] } }>(`/x/player/wbi/v2?aid=${data.aid}&cid=${data.pages[0].cid}`,signal,network);
     const tracks = player.subtitle?.subtitles ?? [];
     const track = tracks.find(t => /^(?:ai-)?zh/.test(t.lan)) ?? tracks[0];
     if (track) {
-      const response = await fetch(subtitleResource(track.subtitle_url),{ credentials: 'omit', signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]), redirect: 'error' });
-      if (!response.ok) throw new Error('字幕读取失败。');
-      const rows = (await response.json()).body as { content: string }[];
+      const url = subtitleResource(track.subtitle_url);
+      let rows: { content: string }[];
+      if (network) rows = (await network.resource<{ body: { content: string }[] }>(url)).body;
+      else {
+        const response = await fetch(url,{ credentials: 'omit', signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]), redirect: 'error' });
+        if (!response.ok) throw new Error('字幕读取失败。');
+        rows = (await response.json()).body;
+      }
       evidence.excerpt = subtitleExcerpt(rows);
       if (evidence.excerpt) { evidence.checkedPage = 1; evidence.coverage = `第1分P字幕分散抽样（${data.pages.length}个分P），后续分P仅有目录与时长，非完整视频核验`; }
     }

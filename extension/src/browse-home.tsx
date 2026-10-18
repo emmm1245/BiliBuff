@@ -15,6 +15,11 @@ function duration(seconds: number) {
 function videoURL(video: BrowseState['items'][number]) {
   return `https://www.bilibili.com/video/${video.bvid}${video.entry ? `?p=${video.entry.page}` : ''}`;
 }
+function publishedDate(seconds: number) {
+  if (!seconds) return '';
+  const date = new Date(seconds*1000);
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
 export function BrowseHomeView({ state, actions, voting = '' }: { state: BrowseState; actions: Actions; voting?: string }) {
   return <section className="browse" aria-label="AI帮你刷" aria-busy={state.busy}>
     <div className="browse-heading"><h2>AI帮你刷</h2><div className="browse-tools">
@@ -31,7 +36,10 @@ export function BrowseHomeView({ state, actions, voting = '' }: { state: BrowseS
         {video.duration > 0 && <span>{duration(video.entry?.duration || video.duration)}</span>}
       </a>
       <a className="browse-title" href={videoURL(video)} target="_blank" rel="noopener noreferrer" title={video.title}>{video.title}{video.entry && ` · P${video.entry.page} ${video.entry.title}`}</a>
-      <div className="browse-footer"><span className="browse-author" title={video.author}>{video.author}</span>
+      <div className="browse-footer"><div className="browse-meta">
+        <span className="browse-author" title={video.author}>{video.author}</span>
+        {video.published > 0 && <time className="browse-date" dateTime={publishedDate(video.published)} title="发布日期">{publishedDate(video.published)}</time>}
+      </div>
         <div className="browse-votes">{([1,-1] as const).map(vote => {
           const Thumb = vote === 1 ? ThumbsUp : ThumbsDown, label = vote === 1 ? '喜欢' : '不喜欢';
           return <button key={vote} type="button" className={vote === 1 ? 'browse-like' : 'browse-dislike'} aria-label={`${label}：${video.title}`} title={video.vote === vote ? `取消${label}` : label}

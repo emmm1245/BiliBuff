@@ -18,7 +18,10 @@ globalThis.AI_SDK_LOG_WARNINGS = ({ warnings, provider, model }) => {
   }
 };
 
-interface OutputOptions { schema?: ZodType; preview?: (text: string) => void; partial?: (value: unknown) => void; thinking?: () => void }
+interface OutputOptions {
+  schema?: ZodType; preview?: (text: string) => void; partial?: (value: unknown) => void; thinking?: () => void;
+  usage?: (value: { inputTokens?: number; outputTokens?: number }) => void;
+}
 export async function requestAI<T>(prefs: Preferences, selection: { providerId?: string; model?: string }, body: Record<string, unknown>, signal: AbortSignal,
   consume: (value: unknown) => Promise<T> | T, feature: AIDebugFeature, options: OutputOptions = {}): Promise<T> {
   const connection = aiConnection(prefs, selection);
@@ -86,6 +89,7 @@ export async function requestAI<T>(prefs: Preferences, selection: { providerId?:
     if (finish !== 'stop') throw new Error('模型未正常结束生成，可能连接中断，未保存结果。');
     const text = await result.text;
     if (!text.trim()) throw new Error(await result.reasoningText ? '模型只返回了思考过程，没有正式结果。' : '模型返回的正式结果为空。');
+    if (options.usage) options.usage(await result.totalUsage);
     return consume(options.schema ? await result.output : text.trim());
   }).catch(error => {
     if (signal.aborted) throw signal.reason;

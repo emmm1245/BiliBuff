@@ -6,6 +6,12 @@ export const BROWSE_KEY = 'bilibuff-browse';
 export const BROWSE_SEEN_AGE = 7 * 86400000;
 export const BROWSE_POOL_AGE = 3 * 86400000;
 let writes: Promise<unknown> = Promise.resolve();
+let logEpoch = 0;
+export function browseLogEpoch() { return logEpoch; }
+export function clearBrowseLogs() {
+  logEpoch++;
+  return updateBrowseMemory(memory => ({ ...memory,logs: [] }));
+}
 const empty = (): BrowseMemory => ({ context: '', items: [], updatedAt: 0, round: 0, queries: [], seen: [], feedback: [] });
 export async function readBrowseMemory(): Promise<BrowseMemory> {
   await writes;
@@ -22,6 +28,7 @@ export function updateBrowseMemory(update: (memory: BrowseMemory) => BrowseMemor
     const excluded = new Set([...next.seen.map(item => item.bvid),...next.feedback.filter(item => item.vote === -1).map(item => item.video.bvid)]);
     next.pool = [...new Map((next.pool ?? []).filter(item => now-item.checkedAt < BROWSE_POOL_AGE && !excluded.has(item.video.bvid)).map(item => [item.video.bvid,item])).values()].slice(0,36);
     next.logs = (next.logs ?? []).slice(-20);
+    next.searches = (next.searches ?? []).filter(item => now-item.at < BROWSE_SEEN_AGE).slice(-60);
     await browser.storage.local.set({ [BROWSE_KEY]: next });
     return next;
   });

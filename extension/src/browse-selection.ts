@@ -1,121 +1,189 @@
-// 按通用计划融合来源、分批核验并补充小型待推荐池，成功时隐藏内部来源故障。
+// 按通用计划规划查询、追踪真实供给并全局精选，所有B站请求共享有限预算。
 import type { ZodType } from 'zod';
 import { requestAI } from './ai-request';
 import { modelParameters } from './core';
 import { matchGroup } from './filter/rules';
 import { samples } from './database';
 import { browseEvidence, browseHome, browseRelated, browseSearch } from './browse-api';
-import { browseContext, browseFactsSchema, browseFactsTask, browseInstructions, browsePicks, browseProfileSchema, browseProfileTask,
-  browseQueriesSchema, browseShortlistSchema, mergeBrowseCandidates, resolveBrowseIds, selectBrowsePicks } from './browse-ranking';
-import { BROWSE_POOL_AGE, readBrowseMemory, updateBrowseMemory } from './browse-store';
+import { browseContext, browseFactsSchema, browseFactsTask, browseGlobalSchema, browseGlobalTask, browseInstructions, browsePicks, browseProfileSchema, browseProfileTask,
+  browseShortlistSchema, fallbackBrowseRanking, mergeBrowseCandidates, rankBrowsePicks, resolveBrowseIds, selectBrowsePicks } from './browse-ranking';
+import { browseQueryKey, browseQueryPage, browseSearchPlanSchema, browseSearchSummary, browseSearchTask, prepareBrowseSearches } from './browse-search';
+import { BROWSE_POOL_AGE, browseLogEpoch, readBrowseMemory, updateBrowseMemory } from './browse-store';
 import { createBrowseSources } from './browse-sources';
-import type { BrowseEvidence, BrowsePick, BrowseRoundLog, BrowseVideo } from './browse-types';
+import { createBrowseNetwork } from './browse-network';
+import type { BrowseEvidence, BrowsePick, BrowseQueryResult, BrowseRoundLog, BrowseVideo } from './browse-types';
 import type { Preferences } from './types';
 
 export async function selectBrowseBatch(prefs: Preferences, readPreferences: () => Promise<Preferences>, signal: AbortSignal,
   status: (text: string) => void, cooldowns: Map<string,number>) {
   const started = Date.now(), context = browseContext(prefs);
-  const log: BrowseRoundLog = { at: started,durationMs: 0,sources: [],candidates: 0,checked: 0,accepted: 0,published: 0,cached: 0 };
+  const logEpoch = browseLogEpoch();
+  const log: BrowseRoundLog = { at: started,durationMs: 0,sources: [],candidates: 0,checked: 0,accepted: 0,published: 0,cached: 0,
+    contextVersion: 2,revision: prefs.revision,requests: [],queries: [],scopes: {},evidence: {},detailed: 0,subtitles: 0,modelCalls: 0,inputTokens: 0,outputTokens: 0,stages: {},plannedQueries: 0,skippedQueries: [] };
+  const network = createBrowseNetwork(signal,log.requests!,cooldowns);
+  let usageCalls = 0;
   const allowed = (video: BrowseVideo) => !matchGroup(video.title,video.tags,prefs.settings.negative,prefs.settings.exactTags) ||
     (prefs.settings.positiveWins && Boolean(matchGroup(video.title,video.tags,prefs.settings.positive,prefs.settings.exactTags)));
-  const ai = <T>(task: string, input: unknown, schema: ZodType, consume: (value: unknown) => T) =>
-    requestAI(prefs,prefs.settings.browse,{ ...modelParameters(prefs.settings.browse),stream: true,
-      messages: [{ role: 'system',content: `${browseInstructions}\n${task}` },{ role: 'user',content: JSON.stringify(input) }] },
-      AbortSignal.any([signal,AbortSignal.timeout(180000)]),consume,'AI帮你刷',{ schema });
+  const ai = async <T>(stage: string, task: string, input: unknown, schema: ZodType, consume: (value: unknown) => T) => {
+    const start = Date.now(); log.modelCalls!++;
+    const parameters = modelParameters(prefs.settings.browse);
+    // 关闭思考时结构化小任务保留充足输出空间，不沿用几十万词元的异常配置。
+    const output = prefs.settings.browse.thinking ? parameters : Object.fromEntries(Object.entries(parameters).map(([key,value]) =>
+      [key,['max_tokens','max_completion_tokens'].includes(key) ? Math.min(Number(value),8192) : value]));
+    try {
+      return await requestAI(prefs,prefs.settings.browse,{ ...output,stream: true,
+        messages: [{ role: 'system',content: `${browseInstructions}\n${task}` },{ role: 'user',content: JSON.stringify(input) }] },
+        AbortSignal.any([signal,AbortSignal.timeout(180000)]),consume,'AI帮你刷',{ schema,usage: value => {
+          log.inputTokens! += value.inputTokens ?? 0; log.outputTokens! += value.outputTokens ?? 0;
+          if (value.inputTokens !== undefined && value.outputTokens !== undefined) usageCalls++;
+        } });
+    } finally { log.stages![stage] = (log.stages![stage] ?? 0)+Date.now()-start; }
+  };
   const ensureContext = async () => { if (browseContext(await readPreferences()) !== context) throw new Error('计划或推荐设置已改变，请重新选片。'); };
-  let accepted: BrowsePick[] = [];
+  const mark = (videos: BrowseVideo[], field: 'shortlisted' | 'qualified' | 'pooled' | 'published') => {
+    for (const video of videos) for (const id of video.queryKeys ?? []) {
+      const query = log.queries!.find(item => item.id === id) ?? history.find(item => item.id === id); if (query) query[field]++;
+    }
+  };
+  let accepted: BrowsePick[] = [], history: BrowseQueryResult[] = [], factBatches = 0;
+  const cachedIds = new Set<string>();
   try {
     let memory = await readBrowseMemory();
+    history = memory.context === context ? memory.searches ?? [] : [];
     const watched = new Set((await samples('watched',300)).map(item => item.bvid));
     const eligible = new Set(mergeBrowseCandidates([(memory.context === context ? memory.pool ?? [] : []).map(pick => pick.video)],memory,watched).filter(allowed).map(video => video.bvid));
     accepted = (memory.context === context ? memory.pool ?? [] : []).filter(pick => eligible.has(pick.video.bvid) && started-pick.checkedAt < BROWSE_POOL_AGE);
+    for (const pick of accepted) cachedIds.add(pick.video.bvid);
     log.cached = accepted.length;
-    const user = { plan: prefs.plan,preferences: prefs.settings.positive,avoid: prefs.settings.negative,
+    const user = { plan: prefs.plan,...(prefs.settings.browse.scopeNote ? { scopeNote: prefs.settings.browse.scopeNote } : {}),
+      preferences: prefs.settings.positive,avoid: prefs.settings.negative,
       feedback: memory.feedback.slice(0,40).map(item => ({ title: item.video.title,tags: item.video.tags,vote: item.vote })),
       recentRecommendations: memory.seen.slice(-40).map(item => item.title).filter(Boolean) };
+    let profile = memory.context === context ? memory.profile : undefined;
     try {
       status('正在为你挑选视频…');
-      const profile = memory.context === context && memory.profile ? memory.profile :
-        await ai(browseProfileTask,{ plan: prefs.plan },browseProfileSchema,value => browseProfileSchema.parse(value));
+      profile ??= await ai('profile',browseProfileTask,{ plan: prefs.plan,...(user.scopeNote ? { scopeNote: user.scopeNote } : {}) },browseProfileSchema,value => browseProfileSchema.parse(value));
       signal.throwIfAborted(); await ensureContext();
       memory = await updateBrowseMemory(latest => {
         signal.throwIfAborted();
         const same = latest.context === context;
         return { ...latest,context,profile,items: same ? latest.items : [],updatedAt: same ? latest.updatedAt : 0,
-          pool: same ? latest.pool : [],round: (same ? latest.round : 0)+1,queries: same ? latest.queries : [] };
+          pool: same ? latest.pool : [],round: (same ? latest.round : 0)+1,queries: same ? latest.queries : [],searches: same ? latest.searches : [] };
       });
       const sources = createBrowseSources(signal,log.sources,cooldowns), considered = new Set(accepted.map(pick => pick.video.bvid));
-      const backlog: BrowseVideo[] = [];
+      const discovered = new Set(considered), backlog: BrowseVideo[] = [];
       const liked = memory.feedback.filter(item => item.vote === 1);
-      for (let cycle = 0; cycle < 3 && selectBrowsePicks(accepted).length < 12; cycle++) {
+      for (let cycle = 0; cycle < 3 && network.remaining && selectBrowsePicks(accepted).length < 12; cycle++) {
         signal.throwIfAborted();
-        const search = await ai(`生成最多4个不同的B站搜索词，紧扣计划边界与偏好。参考近期方向、已推荐标题、本轮供给结果轮换角度；不要为补数量越出计划。只输出 {"queries":["搜索词"]}。`,
-          { ...user,profile,recentQueries: memory.queries,cycle,supply: { accepted: accepted.length,checked: log.checked,sourceFailures: log.sources.filter(item => item.error).length } },
-          browseQueriesSchema,value => browseQueriesSchema.parse(value));
-        const queries = [...new Set(search.queries)];
-        await updateBrowseMemory(latest => { signal.throwIfAborted(); return { ...latest,queries: [...latest.queries,...queries] }; });
-        memory.queries = [...memory.queries,...queries].slice(-40);
-        status('正在为你挑选视频…');
+        const search = await ai('search',browseSearchTask,{ ...user,profile,cycle,coverage: accepted.map(pick => ({ scope: pick.scopeKey,topic: pick.topic })),
+          recentQueries: memory.queries,results: browseSearchSummary([...history,...log.queries!]) },browseSearchPlanSchema,value => browseSearchPlanSchema.parse(value));
+        log.plannedQueries! += search.searches.length;
+        const tasks = prepareBrowseSearches(search.searches,[...history,...log.queries!],log.skippedQueries!);
+        await updateBrowseMemory(latest => { signal.throwIfAborted(); return { ...latest,queries: [...latest.queries,...tasks.map(task => task.query)] }; });
+        memory.queries = [...memory.queries,...tasks.map(task => task.query)].slice(-40);
         const groups: BrowseVideo[][] = [backlog];
-        groups.push(await sources.collect('B站推荐','home',() => browseHome(signal)));
-        const page = ((memory.round-1)*3+cycle)%5+1;
-        for (const query of queries) groups.push(await sources.collect(`搜索：${query}`,'search',() => browseSearch(query,'totalrank',page,signal)));
-        groups.push(await sources.collect(`最新投稿：${queries[cycle%queries.length]}`,'search',() => browseSearch(queries[cycle%queries.length]!,'pubdate',1,signal)));
-        if (liked.length) groups.push(await sources.collect('点赞关联','related',() => browseRelated(liked[(memory.round+cycle-1)%liked.length]!.video.bvid,signal)));
+        const home = await sources.collect('B站推荐','home',() => browseHome(signal,network)); groups.push(home);
+        for (const video of home) discovered.add(video.bvid);
+        for (const task of tasks) {
+          const start = Date.now(), sourceIndex = log.sources.length, requestIndex = log.requests!.length;
+          const page = browseQueryPage([...history,...log.queries!],task);
+          const query: BrowseQueryResult = { ...task,id: crypto.randomUUID(),key: browseQueryKey(task),page,at: start,ok: false,errorKind: 'pending',durationMs: 0,
+            returned: 0,rawReturned: 0,added: 0,filtered: 0,shortlisted: 0,qualified: 0,pooled: 0,published: 0 };
+          log.queries!.push(query);
+          let videos: BrowseVideo[];
+          try { videos = await sources.collect(`搜索：${task.query}`,'search',() => browseSearch(task.query,task.order,page,signal,network)); }
+          catch (error) { query.durationMs = Date.now()-start; query.errorKind = signal.reason?.name === 'TimeoutError' ? 'timeout' : 'cancelled'; throw error; }
+          const outcome = log.sources.slice(sourceIndex).at(-1);
+          const response = log.requests!.slice(requestIndex).findLast(item => item.kind === 'search' && !item.error);
+          const valid = mergeBrowseCandidates([videos],memory,watched), permitted = valid.filter(allowed);
+          Object.assign(query,{
+            ok: outcome?.kind === 'success' || outcome?.kind === 'empty',errorKind: ['success','empty'].includes(outcome?.kind ?? '') ? undefined : outcome?.kind,
+            durationMs: Date.now()-start,returned: videos.length,rawReturned: response?.count ?? videos.length,
+            added: permitted.filter(video => !discovered.has(video.bvid) && !considered.has(video.bvid)).length,
+            filtered: (response?.count ?? videos.length)-videos.length+valid.length-permitted.length });
+          for (const video of videos) discovered.add(video.bvid);
+          groups.push(videos.map(video => ({ ...video,queryKeys: [query.id] })));
+        }
+        if (liked.length) groups.push(await sources.collect('点赞关联','related',() => browseRelated(liked[(memory.round+cycle-1)%liked.length]!.video.bvid,signal,network)));
         const latest = await readBrowseMemory();
         const candidates = mergeBrowseCandidates(groups,latest,watched).filter(video => !considered.has(video.bvid) && allowed(video)).slice(0,100);
         log.candidates += candidates.length;
         if (!candidates.length) { if (!sources.remaining) break; continue; }
-        status('正在为你挑选视频…');
-        const shortlist = await ai('从真实候选中选择最多18条值得核验的内容，按价值排序。结合时长和标题保留不同形式与角度，不规定长短比例。只输出 {"ids":["v0"]}，允许为空。',
-          { ...user,profile,candidates: candidates.map((video,i) => ({ id: `v${i}`,...video })) },browseShortlistSchema,value => browseShortlistSchema.parse(value));
+        if (!network.remaining) break;
+        const shortlist = await ai('shortlist','从真实候选中选择最多18条值得核验的内容，按价值排序。保留不同主题与互补角度，不规定长短比例。只输出 {"ids":["v0"]}，允许为空。',
+          { plan: user.plan,scopeNote: user.scopeNote,profile,preferences: user.preferences,feedback: user.feedback,
+            candidates: candidates.map((video,i) => ({ id: `v${i}`,title: video.title,tags: video.tags,description: video.description.slice(0,500),
+            duration: video.duration,sources: video.sources })) },browseShortlistSchema,value => browseShortlistSchema.parse(value));
         const selected = resolveBrowseIds(shortlist.ids,candidates), selectedIds = new Set(selected.map(video => video.bvid));
+        mark(selected,'shortlisted');
         backlog.splice(0,backlog.length,...candidates.filter(video => !selectedIds.has(video.bvid)));
         const evidence: BrowseEvidence[] = [];
         await Promise.all([0,1].map(async worker => {
-          for (let i = worker; i < selected.length; i += 2) {
+          for (let i = worker; i < selected.length && network.remaining; i += 2) {
             signal.throwIfAborted();
             const video = selected[i]!; considered.add(video.bvid);
-            status('正在为你挑选视频…');
-            try { const detail = await browseEvidence(video,signal); if (allowed(detail)) evidence[i] = detail; }
+            try { const detail = await browseEvidence(video,signal,network); if (allowed(detail)) evidence[i] = detail; }
             catch (error) { signal.throwIfAborted(); log.sources.push({ source: `详情：${video.bvid}`,attempt: 1,count: 0,error: (error as Error).message.slice(0,240) }); }
             log.checked++;
           }
         }));
-        const detailed = evidence.filter(Boolean);
-        // 完整目录按视频分组发送；字幕始终仅来自第一P，不额外遍历分P。
+        const detailed = evidence.filter(Boolean); log.detailed! += detailed.length; log.subtitles! += detailed.filter(video => video.excerpt).length;
         for (let offset = 0; offset < detailed.length; offset += 6) {
           const batch = detailed.slice(offset,offset+6);
-          status('正在为你挑选视频…');
-          accepted.push(...await ai(browseFactsTask,{ ...user,profile,topics: [...new Set(accepted.map(pick => pick.topic))],
-            candidates: batch.map((video,i) => ({ id: `v${i}`,...video,parts: video.chapters ? undefined : video.parts,
-              chapters: video.chapters?.map(({ page,title,duration }) => ({ page,title,duration })) })) },browseFactsSchema,value => browsePicks(value,batch)));
+          accepted.push(...await ai('facts',browseFactsTask,{ plan: user.plan,scopeNote: user.scopeNote,profile,topics: [...new Set(accepted.map(pick => pick.topic))],
+            candidates: batch.map((video,i) => ({ id: `v${i}`,title: video.title,description: video.description,tags: video.tags,duration: video.duration,
+              partCount: video.partCount,coverage: video.coverage,checkedPage: video.checkedPage,excerpt: video.excerpt,
+              ...(video.chapters ? { chapters: video.chapters.map(({ page,title,duration }) => ({ page,title,duration })) } : { parts: video.parts }) })) },
+          browseFactsSchema,value => {
+            const facts = browseFactsSchema.parse(value);
+            for (const choice of facts.choices) {
+              log.scopes![choice.scope] = (log.scopes![choice.scope] ?? 0)+1;
+              log.evidence![choice.evidence] = (log.evidence![choice.evidence] ?? 0)+1;
+            }
+            const picks = browsePicks(facts,batch); mark(picks.map(pick => pick.video),'qualified'); return picks;
+          }));
+          factBatches++;
         }
       }
     } catch (error) {
       log.error = (error as Error).message;
       if (signal.aborted && signal.reason?.name !== 'TimeoutError') throw error;
-      // 后续来源或模型故障不覆盖本轮已经取得的合格新内容。
       if (!selectBrowsePicks(accepted).length) throw error;
     }
     await ensureContext();
     if (signal.aborted && signal.reason?.name !== 'TimeoutError') signal.throwIfAborted();
+    if ((accepted.length > 12 || factBatches > 1) && factBatches && !signal.aborted) {
+      accepted = fallbackBrowseRanking(accepted);
+      try {
+        accepted = await ai('ranking',browseGlobalTask,{ ...user,profile,candidates: accepted.map((pick,i) => ({
+          id: `v${i}`,title: pick.video.title,description: pick.video.description.slice(0,300),author: pick.video.author,
+          duration: pick.video.entry?.duration || pick.video.duration,entry: pick.video.entry,topic: pick.topic,scopeKey: pick.scopeKey,
+          contentType: pick.contentType,evidence: pick.evidence ?? 'legacy',partCount: pick.video.partCount })) },
+        browseGlobalSchema,value => rankBrowsePicks(value,accepted));
+      } catch (error) {
+        if (signal.aborted && signal.reason?.name !== 'TimeoutError') throw error;
+        log.error = [log.error,`全局排序：${(error as Error).message}`].filter(Boolean).join('；');
+      }
+    }
+    await ensureContext();
     const saved = await updateBrowseMemory(latest => {
       if (signal.aborted && signal.reason?.name !== 'TimeoutError') signal.throwIfAborted();
       const rejected = new Set(latest.feedback.filter(item => item.vote === -1).map(item => item.video.bvid));
       accepted = accepted.filter(pick => !rejected.has(pick.video.bvid));
       const picks = selectBrowsePicks(accepted), ids = new Set(picks.map(pick => pick.video.bvid)), now = Date.now();
-      log.accepted = accepted.length; log.published = picks.length;
+      log.accepted = accepted.length; log.published = picks.length; log.unselected = accepted.length-picks.length;
+      mark(picks.map(pick => pick.video),'published'); mark(accepted.filter(pick => !ids.has(pick.video.bvid) && !cachedIds.has(pick.video.bvid)).map(pick => pick.video),'pooled');
       return { ...latest,context,items: picks.length ? picks.map(pick => pick.video) : latest.items,updatedAt: picks.length ? now : latest.updatedAt,
         pool: accepted.filter(pick => !ids.has(pick.video.bvid)),seen: [...latest.seen,...picks.map(pick => ({ bvid: pick.video.bvid,title: pick.video.title,at: now }))] };
     });
     return log.published ? '' : saved.items.length ? '暂时没有选出合适的新内容，可以稍后换一批。' : '暂时没有选出合适的内容，可以稍后再试。';
   } catch (error) {
-    log.error = (error as Error).message;
-    throw error;
+    log.error = (error as Error).message; throw error;
   } finally {
     log.durationMs = Date.now()-started;
-    await updateBrowseMemory(memory => ({ ...memory,logs: [...(memory.logs ?? []),log] }));
+    log.usageComplete = usageCalls === log.modelCalls;
+    await updateBrowseMemory(memory => ({ ...memory,logs: logEpoch === browseLogEpoch() ? [...(memory.logs ?? []),log] : memory.logs,
+      searches: memory.context === context ? [...history,...log.queries!] : memory.searches }));
     console.info('AI帮你刷选片',log);
   }
 }

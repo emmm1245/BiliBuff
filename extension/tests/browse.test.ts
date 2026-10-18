@@ -13,14 +13,17 @@ vi.mock('wxt/browser',() => ({ browser: { storage: { local: { get: mocks.get, se
 vi.mock('../src/ai-request',() => ({ requestAI: mocks.ai }));
 vi.mock('../src/database',() => ({ samples: mocks.samples }));
 vi.mock('../src/browse-api',() => ({ browseHome: mocks.home, browseSearch: mocks.search, browseRelated: mocks.related, browseEvidence: mocks.evidence }));
-import { browseContext, mergeBrowseCandidates, browsePicks, resolveBrowseIds, selectBrowsePicks } from '../src/browse-ranking';
-import { BROWSE_KEY, readBrowseMemory, updateBrowseMemory } from '../src/browse-store';
+import { browseContext, mergeBrowseCandidates, browsePicks, rankBrowsePicks, resolveBrowseIds, selectBrowsePicks } from '../src/browse-ranking';
+import { BROWSE_KEY, clearBrowseLogs, readBrowseMemory, updateBrowseMemory } from '../src/browse-store';
 import { createBrowseService } from '../src/browse-service';
 import { BrowseHomeView } from '../src/browse-home';
+import { browseRankingReplay } from './browse-ranking-replay.fixture';
 
 const video = (id: string, source: BrowseVideo['sources'][number] = 'search'): BrowseVideo => ({ bvid: `BV${id}`, title: `线性代数${id}`, author: `作者${id}`, authorId: id, cover: '', duration: 61, published: 1, description: '矩阵课程', tags: ['线性代数'], sources: [source] });
 let prefs: Preferences, saved: Record<string,unknown>, outputs: unknown[];
 const profile = { goals: ['学习线性代数'],topics: ['线性代数'],excluded: [],formats: ['不限'],uncertainties: [] };
+const searchPlan = (query = '线性代数') => ({ searches: [{ query,intent: '知识点学习',scopeKey: '数学',order: 'totalrank',fallback: '' }] });
+const globalRank = (items: { id: string; topic?: string; title?: string }[]) => ({ choices: items.map(item => ({ id: item.id,topic: item.topic || item.title || '矩阵',scopeKey: '数学',contentType: '知识教学' })) });
 const fact = (id: string, scope = 'target', topic = '矩阵') => ({ id,scope,format: 'allowed',evidence: 'catalog',topic,page: 0 });
 beforeEach(() => {
   vi.resetAllMocks();
@@ -33,10 +36,11 @@ beforeEach(() => {
   mocks.search.mockResolvedValue([video('search')]); mocks.related.mockResolvedValue([video('related','related')]);
   mocks.samples.mockResolvedValue([]);
   mocks.evidence.mockImplementation(async (candidate: BrowseVideo) => ({ ...candidate, parts: ['矩阵'], excerpt: '实际字幕', coverage: '抽样' }));
-  outputs = [profile,{ queries: ['线性代数'] },{ ids: ['v0','v1'] },{ choices: [fact('v1'),fact('v0','unknown','其他')] }];
+  outputs = [profile,searchPlan(),{ ids: ['v0','v1'] },{ choices: [fact('v1'),fact('v0','unknown','其他')] }];
   mocks.ai.mockImplementation(async (_prefs, _selection, body, signal: AbortSignal, consume: (value: unknown) => unknown) => {
     signal.throwIfAborted();
-    return consume(outputs.shift() ?? (body.messages[0].content.includes('搜索词') ? { queries: ['线性代数'] } : { ids: [] }));
+    const task = body.messages[0].content, input = JSON.parse(body.messages[1].content);
+    return consume(outputs.shift() ?? (task.includes('全局排序') ? globalRank(input.candidates) : task.includes('搜索词') ? searchPlan() : { ids: [] }));
   });
 });
 function service() { return createBrowseService(async () => structuredClone(prefs)); }
@@ -119,7 +123,7 @@ test('并发换批只生成一次，服务失败保留当前结果', async () =>
 test('明确赞踩参与后续选片，点赞种子扩展关联推荐，不把观看当作点赞', async () => {
   await updateBrowseMemory(memory => ({ ...memory,feedback: [{ video: video('liked'),vote: 1,at: Date.now() }] }));
   const browse = service(); await run(browse);
-  expect(mocks.related).toHaveBeenCalledWith('BVliked',expect.any(AbortSignal));
+  expect(mocks.related).toHaveBeenCalledWith('BVliked',expect.any(AbortSignal),expect.any(Object));
   const input = JSON.parse(mocks.ai.mock.calls[1]![2].messages[1].content);
   expect(input.feedback[0]).toMatchObject({ vote: 1 }); expect(input).not.toHaveProperty('watched');
 });
@@ -138,11 +142,11 @@ test('仅最近40条推荐标题进入模型上下文，旧记录缺少标题仍
   expect((await readBrowseMemory()).seen.at(-1)).toMatchObject({ bvid: 'BVsearch',title: '线性代数search' });
 });
 test('全是旧候选时也推进搜索位置，避免反复停在同一页', async () => {
-  outputs = [profile,...Array.from({ length: 3 },() => ({ queries: ['线性代数'] }))];
+  outputs = [profile,...Array.from({ length: 3 },() => (searchPlan()))];
   saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),seen: [{ bvid: 'BVhome',at: Date.now() },{ bvid: 'BVsearch',at: Date.now() }] };
   await run(service());
   expect((await readBrowseMemory()).round).toBe(1);
-  expect((await readBrowseMemory()).queries).toEqual(['线性代数','线性代数','线性代数']);
+  expect((await readBrowseMemory()).queries).toEqual(['线性代数']);
   expect(mocks.ai).toHaveBeenCalledTimes(4);
 });
 test('选片期间新增的赞踩不会被新批次覆盖', async () => {
@@ -197,7 +201,8 @@ test('候选不足会继续采集到12条，而不是核验第一批后结束', 
   mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
     const input = JSON.parse(body.messages[1].content), task = body.messages[0].content;
     if (task.includes('goals为目标')) return consume(profile);
-    if (task.includes('搜索词')) { generation++; return consume({ queries: ['线性代数'] }); }
+    if (task.includes('全局排序')) return consume(globalRank(input.candidates));
+    if (task.includes('搜索词')) { generation++; return consume(searchPlan()); }
     if (task.includes('初选') || task.includes('值得核验')) return consume({ ids: input.candidates.map((item: { id: string }) => item.id) });
     return consume({ choices: input.candidates.map((item: { id: string; title: string }) => fact(item.id,'target',item.title)) });
   });
@@ -208,7 +213,7 @@ test('候选不足会继续采集到12条，而不是核验第一批后结束', 
 
 test('来源故障不显示给有新推荐的用户，内部日志保留失败原因', async () => {
   mocks.home.mockRejectedValue(new Error('来源暂不可用'));
-  outputs = [profile,{ queries: ['线性代数'] },{ ids: ['v0'] },{ choices: [fact('v0')] }];
+  outputs = [profile,searchPlan(),{ ids: ['v0'] },{ choices: [fact('v0')] }];
   const result = await run(service());
   expect(result.items).toHaveLength(1); expect(result.error).toBe('');
   expect((await readBrowseMemory()).logs?.at(-1)?.sources.some(item => item.error === '来源暂不可用')).toBe(true);
@@ -217,7 +222,7 @@ test('来源故障不显示给有新推荐的用户，内部日志保留失败�
 test('后续模型失败仍发布已完成核验的新内容，不暴露内部错误', async () => {
   mocks.home.mockResolvedValue(Array.from({ length: 8 },(_,i) => video(`batch${i}`)));
   mocks.search.mockResolvedValue([]);
-  outputs = [profile,{ queries: ['线性代数'] },{ ids: Array.from({ length: 8 },(_,i) => `v${i}`) },
+  outputs = [profile,searchPlan(),{ ids: Array.from({ length: 8 },(_,i) => `v${i}`) },
     { choices: Array.from({ length: 6 },(_,i) => fact(`v${i}`,'target',`主题${i}`)) }];
   const original = mocks.ai.getMockImplementation()!;
   mocks.ai.mockImplementation(async (...args) => { if (!outputs.length) throw new Error('后续模型失败'); return original(...args); });
@@ -244,5 +249,125 @@ test('避开词条较多仍能开始找片，计划整理与偏好规则分开�
   expect((await readBrowseMemory()).profile?.excluded).toEqual(excluded);
   expect(JSON.parse(mocks.ai.mock.calls[0]![2].messages[1].content)).toEqual({ plan: prefs.plan });
   expect(JSON.parse(mocks.ai.mock.calls[1]![2].messages[1].content).avoid.tags).toEqual(excluded);
+});
+
+test('全局排序能把后到的优质内容放到前面，真实编号与完整性继续受约束', () => {
+  const picks: BrowsePick[] = Array.from({ length: 16 },(_,i) => ({ video: video(String(i)),topic: `主题${i}`,checkedAt: 1 }));
+  const order = [15,14,13,12,...Array.from({ length: 12 },(_,i) => i)];
+  const ranked = rankBrowsePicks(globalRank(order.map(i => ({ id: `v${i}`,topic: picks[i]!.topic }))),picks);
+  expect(selectBrowsePicks(ranked)[0]?.video.bvid).toBe('BV15');
+  expect(selectBrowsePicks(picks).some(pick => pick.video.bvid === 'BV15')).toBe(false);
+  expect(() => rankBrowsePicks(globalRank([{ id: 'v999' }]),picks)).toThrow('不存在');
+  expect(() => rankBrowsePicks(globalRank([{ id: 'v0' }]),picks)).toThrow('完整');
+});
+
+test('全局统一的同义主题限制为三条，不把不同具体知识点一起排除', () => {
+  const picks: BrowsePick[] = ['光线讲解','用光精讲','自然光复盘','自然光串讲','人像构图'].map((topic,i) => ({ video: video(String(i)),topic,checkedAt: 1 }));
+  const ranked = rankBrowsePicks({ choices: picks.map((pick,i) => ({ id: `v${i}`,scopeKey: '摄影',topic: i < 4 ? '自然光使用' : pick.topic,contentType: '实拍演示' })) },picks);
+  expect(selectBrowsePicks(ranked).map(pick => pick.video.bvid)).toEqual(['BV0','BV1','BV2','BV4']);
+});
+
+test('主题标识保留一级与二级边界，避免不同层级组合拼接碰撞', () => {
+  const picks: BrowsePick[] = [0,1].map(i => ({ video: video(String(i)),topic: '原主题',checkedAt: 1 }));
+  const ranked = rankBrowsePicks({ choices: [{ id: 'v0',scopeKey: 'ab',topic: 'c',contentType: '教学' },{ id: 'v1',scopeKey: 'a',topic: 'bc',contentType: '教学' }] },picks);
+  expect(ranked[0]?.topicKey).not.toBe(ranked[1]?.topicKey);
+});
+
+test('P1字幕不能作为P49的直接内容证据，但明确的目录判断可以推荐P49', () => {
+  const evidence = [{ ...video('course'),parts: ['导学','矩阵'],chapters: [{ page: 1,cid: 1,title: '导学',duration: 60 },{ page: 49,cid: 49,title: '矩阵',duration: 900 }],
+    excerpt: '第一P介绍',checkedPage: 1,coverage: '第一P' }];
+  expect(browsePicks({ choices: [{ ...fact('v0'),page: 49,evidence: 'content' }] },evidence)).toEqual([]);
+  expect(browsePicks({ choices: [{ ...fact('v0'),page: 49,evidence: 'catalog' }] },evidence)[0]).toMatchObject({ evidence: 'catalog',video: { entry: { page: 49 } } });
+  expect(browsePicks({ choices: [{ ...fact('v0'),page: 1,evidence: 'content' }] },evidence)[0]?.evidence).toBe('content');
+  expect(browsePicks({ choices: [{ ...fact('v0'),evidence: 'catalog' }] },[{ ...evidence[0]!,excerpt: '' }])).toHaveLength(1);
+});
+
+test('真实查询贡献可从采集追踪到发布，新查询不受总刷新次数影响', async () => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),round: 13 };
+  await run(service());
+  expect(mocks.search.mock.calls[0]?.[2]).toBe(1);
+  const first = (await readBrowseMemory()).searches?.[0];
+  expect(first).toMatchObject({ query: '线性代数',order: 'totalrank',page: 1,ok: true,returned: 1,added: 1,shortlisted: 1,qualified: 1,published: 1 });
+  const shortlist = JSON.parse(mocks.ai.mock.calls[2]![2].messages[1].content).candidates[0];
+  expect(shortlist).toHaveProperty('title'); expect(shortlist).not.toHaveProperty('bvid'); expect(shortlist).not.toHaveProperty('cover');
+  const facts = JSON.parse(mocks.ai.mock.calls[3]![2].messages[1].content);
+  expect(facts.plan).toBe(prefs.plan); expect(facts).not.toHaveProperty('avoid'); expect(facts).not.toHaveProperty('recentRecommendations');
+});
+
+test('来源限流被记为故障而非空主题，保留已有新推荐且不继续轰炸搜索', async () => {
+  mocks.search.mockRejectedValue(new Error('HTTP 412'));
+  outputs = [profile,searchPlan(),{ ids: ['v0'] },{ choices: [fact('v0')] }];
+  const result = await run(service());
+  expect(result.items).toHaveLength(1); expect(result.error).toBe(''); expect(mocks.search).toHaveBeenCalledOnce();
+  const results = (await readBrowseMemory()).searches!;
+  expect(results[0]).toMatchObject({ ok: false,errorKind: 'limited',page: 1 });
+  expect(results.every(item => !item.ok && item.page === 1)).toBe(true);
+});
+
+test('范围补充可保存与备份，空补充兼容原缓存，不同补充隔离原上下文', () => {
+  const before = browseContext(prefs);
+  delete prefs.settings.browse.scopeNote;
+  expect(browseContext(prefs)).toBe(before);
+  prefs.settings.browse.scopeNote = '仅限自然光人像实拍，不包含器材评测';
+  expect(browseContext(prefs)).not.toBe(before);
+  expect(validateSettings(prefs.settings).browse.scopeNote).toBe(prefs.settings.browse.scopeNote);
+  expect(validateBackup({ format: 'bilibili-focus-backup',version: 1,settings: prefs.settings,plan: prefs.plan,events: [],result: null }).settings.browse.scopeNote).toBe(prefs.settings.browse.scopeNote);
+});
+
+test('清除诊断后迟到的选片不恢复旧日志，但仍保留推荐和查询记忆', async () => {
+  let finish!: () => void;
+  mocks.ai.mockImplementationOnce(async (_prefs,_selection,_body,_signal,consume) => {
+    await new Promise<void>(resolve => { finish = resolve; }); outputs.shift(); return consume(profile);
+  });
+  const browse = service(); await browse.handle({ type: 'browse-refresh' });
+  await vi.waitFor(() => expect(mocks.ai).toHaveBeenCalledOnce());
+  await clearBrowseLogs(); finish(); const result = await settled(browse);
+  const memory = await readBrowseMemory();
+  expect(result.items).toHaveLength(1); expect(memory.logs).toEqual([]); expect(memory.searches?.length).toBeGreaterThan(0);
+});
+
+test('快速模式按任务收敛输出预算，不改用户设置或截断排除词条', async () => {
+  prefs.settings.browse.thinking = false; prefs.settings.browse.maxTokens = 384000;
+  await run(service());
+  for (const call of mocks.ai.mock.calls) expect(call[2].max_tokens ?? call[2].max_completion_tokens).toBeLessThanOrEqual(8192);
+  expect(prefs.settings.browse.maxTokens).toBe(384000);
+});
+
+for (const sample of browseRankingReplay) test(`真实响应协议回放保留编号、作者与主题约束：${sample.name}`, () => {
+  const picks = sample.picks.map(pick => ({ ...pick,video: { ...pick.video,sources: ['search'] as BrowseVideo['sources'] } }));
+  const ranked = rankBrowsePicks(sample.output,picks), result = selectBrowsePicks(ranked);
+  expect(ranked).toHaveLength(picks.length);
+  expect(new Set(ranked.map(pick => pick.video.bvid))).toEqual(new Set(picks.map(pick => pick.video.bvid)));
+  for (const pick of result) {
+    expect(result.filter(other => other.video.authorId === pick.video.authorId).length).toBeLessThanOrEqual(2);
+    expect(result.filter(other => other.topicKey === pick.topicKey).length).toBeLessThanOrEqual(3);
+  }
+});
+
+test('缓存内容发布后贡献归还原查询，不重复累计已经进入池子的内容', async () => {
+  const query = { ...searchPlan().searches[0]!,order: 'totalrank' as const,id: 'prior',key: 'totalrank:线性代数',page: 1,at: Date.now(),ok: true,durationMs: 1,
+    returned: 14,rawReturned: 14,added: 14,filtered: 0,shortlisted: 14,qualified: 14,pooled: 14,published: 0 };
+  const pool: BrowsePick[] = Array.from({ length: 14 },(_,i) => ({ video: { ...video(`prior${i}`),queryKeys: ['prior'] },topic: String(i),checkedAt: Date.now() }));
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile,pool,searches: [query] };
+  const result = await run(service());
+  expect(result.items).toHaveLength(12); expect(mocks.ai).not.toHaveBeenCalled();
+  expect((await readBrowseMemory()).searches?.[0]).toMatchObject({ published: 12,pooled: 14 });
+});
+
+test('范围补充在全局排序期间改变也不发布迟到结果', async () => {
+  saved[BROWSE_KEY] = { ...await readBrowseMemory(),context: browseContext(prefs),profile,items: [video('old')],updatedAt: 1 };
+  mocks.home.mockResolvedValue(Array.from({ length: 8 },(_,i) => video(`fresh${i}`))); mocks.search.mockResolvedValue([]);
+  let finish!: () => void;
+  mocks.ai.mockImplementation(async (_prefs,_selection,body,_signal,consume) => {
+    const input = JSON.parse(body.messages[1].content), task = body.messages[0].content;
+    if (task.includes('全局排序')) { await new Promise<void>(resolve => { finish = resolve; }); return consume(globalRank(input.candidates)); }
+    if (task.includes('搜索词')) return consume(searchPlan());
+    if (task.includes('值得核验')) return consume({ ids: input.candidates.map((item: { id: string }) => item.id) });
+    return consume({ choices: input.candidates.map((item: { id: string; title: string }) => fact(item.id,'target',item.title)) });
+  });
+  const browse = service(); await browse.handle({ type: 'browse-refresh' });
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  prefs.settings.browse.scopeNote = '只看实际演示'; browse.invalidate(prefs); finish(); await settled(browse);
+  expect((await readBrowseMemory()).items.map(video => video.bvid)).toEqual(['BVold']);
 });
 

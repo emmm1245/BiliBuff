@@ -20,6 +20,7 @@ import type { VideoProgress } from '../video-types';
 import { defaultVideoOptions } from '../video-ai';
 import type { VideoSelection } from '../video-types';
 import { createBrowseService } from '../browse-service';
+import { clearBrowseLogs, readBrowseMemory } from '../browse-store';
 
 export const PREFERENCES_KEY = 'preferences';
 export function startBackground() {
@@ -116,8 +117,11 @@ export function startBackground() {
         if (typeof message.enabled !== 'boolean') throw new Error('调试日志开关无效。');
         await setDebugEnabled(message.enabled);
         return;
-      case 'debug-export': return { format: 'bilibili-focus-debug', version: 1, exportedAt: new Date().toISOString(), logs: await allDebugLogs() };
-      case 'debug-clear': return clearDebugLogs();
+      case 'debug-export': {
+        const memory = await readBrowseMemory();
+        return { format: 'bilibili-focus-debug',version: 1,exportedAt: new Date().toISOString(),logs: await allDebugLogs(),browseRounds: memory.logs ?? [] };
+      }
+      case 'debug-clear': await Promise.all([clearDebugLogs(),clearBrowseLogs()]); return;
       case 'samples': {
         const prefs = await preferences();
         const target = message.counts?.blocked ?? prefs.settings.minBlocked;

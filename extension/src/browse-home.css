@@ -20,7 +20,9 @@
 .browse-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-height: 44px; margin: 10px 0 4px; overflow: hidden; overflow-wrap: anywhere; color: var(--home-text); text-decoration: none; font-size: 14px; line-height: 22px; }
 .browse-title:hover { color: #00aeec; }
 .browse-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.browse-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--home-settings-text); font-size: 12px; }
+.browse-meta { display: flex; flex: 1; flex-wrap: wrap; min-width: 0; align-items: center; gap: 2px 6px; }
+.browse-author { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--home-settings-text); font-size: 12px; }
+.browse-date { white-space: nowrap; color: var(--home-settings-text); font-size: 12px; }
 .browse-votes { display: flex; flex-shrink: 0; gap: 2px; }
 .browse-votes button { width: 32px; height: 30px; padding: 6px; border-color: transparent; background: transparent; }
 .browse-votes .browse-like[aria-pressed=true] { color: #00aeec; background: var(--home-chip-bg); }
