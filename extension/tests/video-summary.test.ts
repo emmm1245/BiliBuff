@@ -51,6 +51,24 @@ test('预览接纳标题和已完成区块，过滤残缺或越界组件；生�
   expect(html).toMatch(/<button[^>]*disabled/); expect(html).toContain('aria-busy="true"');
 });
 
+test.each(blocks)('$type：追加未完成条目保留原内容，完整后追加', block => {
+  const original = summaryPreview(ui(block),0,1);
+  const unfinished = { ...block, props: { ...block.props, items: [...block.props.items,{ title: '下一条' }] } };
+  const during = summaryPreview(ui(unfinished as SummaryBlock),0,1);
+  expect(during).toEqual(original);
+  const appended = { ...block.props.items[0]!, title: '下一条' };
+  const completed = { ...block, props: { ...block.props, items: [...block.props.items,appended] } };
+  const after = summaryPreview(ui(completed as SummaryBlock),0,1);
+  expect(after.blocks[0]?.props.items).toEqual([...block.props.items,appended]);
+  expect(summarySpec(during).elements.summary!.children).toEqual(summarySpec(after).elements.summary!.children);
+});
+
+test('尚未完整的前置区块不被跳过，后续区块不会占用其渲染位置', () => {
+  const pending = { type: 'Steps', props: { title: '未完成', items: [] } };
+  const preview = summaryPreview({ headline: '结论', context: '', blocks: [pending,blocks[0]] },0,1);
+  expect(preview.blocks).toEqual([]);
+});
+
 test('复制文本包含默认折叠的额外条目、完整依据、条件和观点归属', () => {
   const steps = ui({ type: 'Steps', props: { ...common, items: Array.from({ length: 5 },(_,i) => ({ ...item, title: `步骤${i+1}` })) } });
   const text = summaryText(steps,rows);

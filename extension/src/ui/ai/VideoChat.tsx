@@ -60,6 +60,5 @@ export function VideoChat({ state, actions, question, setQuestion, active }: {
         </div>
       </form>
     </Card>
-    <p className="chat-footnote">基于视频字幕回答，可点击时间戳核对原文</p>
   </div>;
 }

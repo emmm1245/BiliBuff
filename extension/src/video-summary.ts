@@ -57,14 +57,28 @@ export function validateSummary(value: unknown, first: number, last: number, all
   if (parsed.blocks.some(block => !validRefs(block, first, last, allowed))) throw new Error('总结引用不属于本次字幕资料，未保存结果。');
   return parsed;
 }
-// 部分结构只用于阅读；只接纳字段完整且引用有效的区块，不将预览保存为结果。
+const previewBlockHeader = z.object({ type: z.enum(['KeyPoints','Steps','Comparison','CausalChain','Argument','Timeline']),
+  props: z.object({ items: z.array(z.unknown()) }).loose() });
+// 逐条接纳完整前缀，尾部新条目未完成时不撤掉已展示区块；预览仍不写入缓存。
 export function summaryPreview(value: unknown, first: number, last: number, allowed?: ReadonlySet<number>): SummaryPreview {
   const envelope = z.object({ headline: z.string().max(100).optional(), context: z.string().max(240).optional(), blocks: z.array(z.unknown()).optional() }).safeParse(value);
   if (!envelope.success) return { headline: '', context: '', blocks: [] };
-  return { headline: envelope.data.headline ?? '', context: envelope.data.context ?? '', blocks: (envelope.data.blocks ?? []).slice(0,3).flatMap(block => {
-    const parsed = summaryBlockSchema.safeParse(block);
-    return parsed.success && validRefs(parsed.data,first,last,allowed) ? [parsed.data] : [];
-  }) };
+  const blocks: SummaryBlock[] = [];
+  for (const block of (envelope.data.blocks ?? []).slice(0,3)) {
+    const header = previewBlockHeader.safeParse(block);
+    if (!header.success) break;
+    const itemSchema = summaryComponents[header.data.type].props.shape.items.element;
+    const items: unknown[] = [];
+    for (const item of header.data.props.items) {
+      const parsed = itemSchema.safeParse(item);
+      if (!parsed.success || parsed.data.ref < first || parsed.data.ref > last || (allowed && !allowed.has(parsed.data.ref))) break;
+      items.push(parsed.data);
+    }
+    const parsed = summaryBlockSchema.safeParse({ ...header.data, props: { ...header.data.props, items } });
+    if (!parsed.success) break;
+    blocks.push(parsed.data);
+  }
+  return { headline: envelope.data.headline ?? '', context: envelope.data.context ?? '', blocks };
 }
 export function summarySpec(value: SummaryUI | SummaryPreview): Spec {
   const keys = value.blocks.map((_,index) => `block-${index}`);

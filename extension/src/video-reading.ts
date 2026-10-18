@@ -48,7 +48,7 @@ export function startVideoReading(initial: ContentSettings, signal: AbortSignal)
       language = source.tracks.find(t => t.id === 'zh-CN' || t.id === 'zh-Hans' || t.id === 'zh')?.id || source.tracks.find(t => t.id.includes('zh'))?.id || source.tracks[0]?.id || '';
       state.busy = false; void media();
       if (language) await read();
-      else { state.status = '暂无字幕，可登录后刷新。'; state.error = source.subtitleError ?? ''; update(); }
+      else { state.status = '暂无字幕！'; state.error = source.subtitleError ?? ''; update(); }
     } catch (error) { if (isCurrent(epoch)) { state.busy = false; fail(error); } }
   }
   async function read(refresh = false) {
