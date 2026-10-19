@@ -9,10 +9,12 @@
 
 <p align="center">
   <a href="docs/使用指南/扩展安装与迁移.md#安装"><img src="https://img.shields.io/badge/Chrome_·_Edge-00A1D6?style=flat-square" alt="Chrome · Edge"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-FB7299?style=flat-square" alt="Apache 2.0 开源许可"></a>
   <a href="https://wxt.dev/"><img src="https://img.shields.io/badge/WXT-67D55E?style=flat-square" alt="WXT"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-149ECA?style=flat-square&amp;logo=react&amp;logoColor=white" alt="React"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript"></a>
+  <a href="https://linux.do" alt="LINUX DO">
+        <img
+            src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
 </p>
 
 <p align="center">
@@ -24,7 +26,7 @@
 **BiliBuff** 是面向 B 站学习与日常浏览的**效率**与**体验**增强插件。推荐筛选、屏蔽视频、留白首页、观看统计，加上按需使用的 AI计划分析、AI视频助手和AI评论区速读，让找内容、看视频、读评论超丝滑。
 
 当前chrome扩展商店已发布，edge用户也可通过该链接安装扩展
-<a href="https://chromewebstore.google.com/detail/lapdedhlnlgldnfbedabdpfabhimkdok?utm_source=item-share-cb" style="color:pink;">BiliBuff - 哔哩哔哩｜B站效率与体验增强插件</a>
+<a href="https://chromewebstore.google.com/detail/lapdedhlnlgldnfbedabdpfabhimkdok?utm_source=item-share-cb">BiliBuff - 哔哩哔哩｜B站效率与体验增强插件</a>
 
 edge扩展商店即将发布，敬请期待
 
