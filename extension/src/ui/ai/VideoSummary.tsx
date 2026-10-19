@@ -30,7 +30,7 @@ function Items({ items, numbered = false }: { items: ListProps['items']; numbere
     {numbered && <span className="summary-number" aria-hidden="true">{String(index+1).padStart(2,'0')}</span>}
     <div className="summary-item-content"><strong>{item.title}</strong><Reference id={item.ref} />{item.text && <p>{item.text}</p>}<Detail text={item.detail} /></div>
   </div>;
-  return <>{items.slice(0,3).map(content)}{items.length > 3 && <details className="summary-detail summary-more"><summary>其余 {items.length-3} 项</summary>{items.slice(3).map((item,index) => content(item,index+3))}</details>}</>;
+  return <>{items.map(content)}</>;
 }
 const defined = defineRegistry(summaryCatalog, { components: {
   // 核心要点：简洁条目列表。

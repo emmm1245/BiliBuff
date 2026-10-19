@@ -27,8 +27,8 @@ input,textarea{width:100%;min-width:0;border:1px solid var(--border);background:
 .generative-summary p{font-size:12px;margin:4px 0 0;color:var(--muted);line-height:1.7}
 /* 共用：字幕时间引用 */
 .generative-summary .summary-ref{display:inline-flex;vertical-align:baseline;gap:2px;margin:0 0 0 5px;padding:2px 5px;min-height:0;font-size:10px;line-height:1.5;font-variant-numeric:tabular-nums;border:1px solid transparent;background:var(--blue-soft);color:var(--accent);border-radius:4px;white-space:nowrap}.generative-summary .summary-ref:hover:enabled{border-color:var(--accent);background:var(--blue-soft)}.generative-summary .summary-ref:disabled{opacity:.65}
-/* 共用：折叠详情与额外条目 */
-.summary-detail{font-size:12px;margin-top:7px}.summary-detail>summary{display:flex;gap:6px;font-size:12px;color:var(--muted);padding:0;cursor:pointer;touch-action:auto;user-select:auto}.summary-detail>summary:before{content:'＋';color:var(--accent)}.summary-detail[open]>summary:before{content:'−'}.summary-detail>p{margin-top:8px;line-height:1.8}.summary-more{border-top:1px solid var(--border);padding-top:10px}
+/* 共用：每条内容的折叠详情 */
+.summary-detail{font-size:12px;margin-top:7px}.summary-detail>summary{display:flex;gap:6px;font-size:12px;color:var(--muted);padding:0;cursor:pointer;touch-action:auto;user-select:auto}.summary-detail>summary:before{content:'＋';color:var(--accent)}.summary-detail[open]>summary:before{content:'−'}.summary-detail>p{margin-top:8px;line-height:1.8}
 /* 共用：直接展示的适用条件 */
 .generative-summary .summary-condition{background:var(--field);border-radius:7px;padding:9px 11px;color:var(--text);margin:0 0 9px}
 /* 对比：双列对象与差异维度 */

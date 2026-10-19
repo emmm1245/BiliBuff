@@ -42,7 +42,7 @@ export const summaryInstruction = `完整阅读输入，生成适合350像素窄
 headline先生成，一句话结论尽量不超过40个汉字。context简述必要的全局适用条件，无内容则为空字符串。
 blocks由你从以下目录自由选择、组合和排序，通常1–3个区块，简单内容允许只用核心要点；禁止凑组件、重复表达。
 ${Object.entries(summaryComponents).map(([name, component]) => `${name}：${component.description}`).join('\n')}
-每区块重要限制写condition直接展示，无则为空。默认阅读最多3条，条目title尽量16字内，text尽量40字内，长论据与例子写detail，无内容则为空。
+每区块重要限制写condition直接展示，无则为空。条目全部直接展示，按内容精简，条目title尽量16字内，text尽量40字内，长论据与例子写detail，无内容则为空。
 ref必须来自输入中真实存在的字幕行号，每条选择最相关的一行，不输出时间、不编造数字或事实。不让用户做额外选择。
 合并分段时必须保留各段重要信息、限定条件和原字幕行号，只能沿用输入parts中已有的ref，不根据不完整资料补全事实。`;
 

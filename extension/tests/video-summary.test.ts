@@ -69,12 +69,14 @@ test('尚未完整的前置区块不被跳过，后续区块不会占用其渲�
   expect(preview.blocks).toEqual([]);
 });
 
-test('复制文本包含默认折叠的额外条目、完整依据、条件和观点归属', () => {
-  const steps = ui({ type: 'Steps', props: { ...common, items: Array.from({ length: 5 },(_,i) => ({ ...item, title: `步骤${i+1}` })) } });
+test.each(['KeyPoints','Steps','Timeline'] as const)('%s所有条目直接可见，完整依据仍可展开及复制', type => {
+  const steps = ui({ type, props: { ...common, items: Array.from({ length: 5 },(_,i) => ({ ...item, title: `步骤${i+1}` })) } });
   const text = summaryText(steps,rows);
   expect(text).toContain('步骤5'); expect(text).toContain('重要限制'); expect(text).toContain('折叠中的完整论据');
   expect(summaryText(ui(blocks[5]!),rows)).toContain('受访者：作者判断');
   const html = renderToStaticMarkup(createElement(VideoSummary,{ value: steps, rows, seek: vi.fn() }));
-  expect(html).toContain('summary-more'); expect(html).toContain('步骤5');
+  const visibleItems = html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g,'');
+  expect(visibleItems).toContain('步骤4'); expect(visibleItems).toContain('步骤5');
+  expect(html).toContain('summary-detail');
   expect(html).not.toContain('<details open');
 });
