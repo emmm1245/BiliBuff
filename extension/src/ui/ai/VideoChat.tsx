@@ -1,5 +1,5 @@
 // 用现有消息、卡片和输入组件组合视频问答，提供建议问题、流式状态与字幕来源。
-import { useEffect, useRef } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 import { ArrowRight, ArrowUp, Sparkles } from 'lucide-react';
 import type { VideoPanelActions, VideoPanelState } from '../../video-panel';
 import { clock, videoAnswer, videoAnswerText } from '../../video-data';
@@ -20,9 +20,10 @@ export function VideoChat({ state, actions, question, setQuestion, active }: {
   const generating = task === 'chat', available = !!cache?.rows.length;
   const sendable = available && !state.busy && !task && !!question.trim();
   useEffect(() => { follow.current = true; }, [state.question, state.source]);
-  useEffect(() => {
+  const followAnswer = useEffectEvent(() => {
     if (active && follow.current && conversation.current) conversation.current.scrollTop = conversation.current.scrollHeight;
-  }, [active, cache?.answers.length, generating, preview]);
+  });
+  useEffect(() => { followAnswer(); }, [cache?.answers.length, generating, preview]);
   const ask = () => { if (sendable) actions.analyze('chat',question.trim()); };
   return <div className="video-chat">
     <div className="chat-heading"><span className="chat-context"><span className={available ? 'context-dot ready' : 'context-dot'} />{available ? '已连接视频内容' : '该视频无法使用'}</span><span className="muted">回答附原文定位</span></div>

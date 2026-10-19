@@ -1,5 +1,5 @@
 // 呈现分区阅读的视频助手、统一生成与取消入口，以及结构化结果的平滑完成状态。
-import { createElement, createRef, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
+import { createElement, createRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import css from './video-panel.css?inline';
 import { activeSubtitle, clock, videoTimeline } from './video-data';
 import type { ChapterPreview } from './analysis/schemas';
@@ -40,6 +40,18 @@ export function VideoPanel({ state, actions, ref }: { state: VideoPanelState; ac
   const [format, setFormat] = useState<'text' | 'timed' | 'srt'>('timed');
   const cues = useRef<(HTMLButtonElement | null)[]>([]), scroller = useRef<HTMLDivElement>(null), follow = useRef<HTMLInputElement>(null);
   const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
+  const shell = useRef<HTMLDetailsElement>(null);
+  const scrollPositions = useRef<Partial<Record<Tab, { outer: number; inner: number }>>>({});
+  const videoKey = source ? `${source.bvid}:${source.cid}` : '';
+  useLayoutEffect(() => {
+    scrollPositions.current = {};
+    shell.current?.querySelectorAll<HTMLElement>('.scroll').forEach(node => node.scrollTo({ top: 0, behavior: 'instant' }));
+  }, [videoKey]);
+  useLayoutEffect(() => {
+    const position = scrollPositions.current[tab];
+    shell.current?.querySelector<HTMLElement>(`[data-pane="${tab}"] .scroll`)?.scrollTo({ top: position?.inner ?? 0, behavior: 'instant' });
+    shell.current?.scrollTo({ top: position?.outer ?? 0, behavior: 'instant' });
+  }, [tab,videoKey]);
   const active = useRef(-1);
   useEffect(() => { setSearch(''); setQuestion(''); }, [source]);
   useEffect(() => { active.current = -1; }, [cache]);
@@ -59,7 +71,12 @@ export function VideoPanel({ state, actions, ref }: { state: VideoPanelState; ac
   } }), [cache,search]);
   const timeline = videoTimeline(source, cache);
   const term = search.trim().toLocaleLowerCase();
-  return <details className="shell" open><summary className="heading"><span className="brand-icon"><Icon name="tv" /></span><strong><span className="brand-name">BiliBuff</span><span className="brand-title">视频助手</span></strong><span className="assistant-badge">AI</span><span className="chevron" aria-hidden="true"><Icon name="chevronDown" size={16} /></span></summary>
+  return <details ref={shell} className="shell" open onScrollCapture={event => {
+    const node = event.target as HTMLElement;
+    const position = scrollPositions.current[tab] ??= { outer: 0, inner: 0 };
+    if (node === shell.current) position.outer = node.scrollTop;
+    else if (node.matches('.scroll') && node.closest('[data-pane]')?.getAttribute('data-pane') === tab) position.inner = node.scrollTop;
+  }}><summary className="heading"><span className="brand-icon"><Icon name="tv" /></span><strong><span className="brand-name">BiliBuff</span><span className="brand-title">视频助手</span></strong><span className="assistant-badge">AI</span><span className="chevron" aria-hidden="true"><Icon name="chevronDown" size={16} /></span></summary>
     <div className="tabs" role="tablist" aria-label="BiliBuff视频助手">{(Object.keys(tabs) as Tab[]).map((name,index,all) => <Button key={name} role="tab" data-tab={name}
       id={`bb-video-tab-${name}`} aria-controls={`bb-video-pane-${name}`} ref={node => { tabButtons.current[index] = node; }} aria-selected={tab === name} tabIndex={tab === name ? 0 : -1}
       onClick={() => setTab(name)} onKeyDown={event => {
