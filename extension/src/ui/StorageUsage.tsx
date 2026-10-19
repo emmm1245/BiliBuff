@@ -25,7 +25,7 @@ export function StorageUsage() {
     {usage && <>
       <div className={`${styles.stats} ${styles.storageStats}`}>
         <div><small>估算合计</small><strong>{usage.databaseBytes === null ? '暂不可用' : formatStorageBytes(usage.localBytes + usage.databaseBytes)}</strong></div>
-        <div><small>设置与速读缓存</small><strong>{formatStorageBytes(usage.localBytes)}</strong></div>
+        <div><small>设置与缓存</small><strong>{formatStorageBytes(usage.localBytes)}</strong></div>
         <div><small>记录等占用（估算）</small><strong>{usage.databaseBytes === null ? '暂不可用' : formatStorageBytes(usage.databaseBytes)}</strong></div>
       </div>
       {!usage.unlimited && <p className={styles.banner}>存储权限尚未生效，请更新并重新加载扩展。</p>}

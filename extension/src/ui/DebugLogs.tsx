@@ -32,7 +32,7 @@ function Operation({ log, children, onExport }: { log: OperationLog; children?: 
     setLoading(true); setStatus('');
     try {
       const value = await send({ type: 'debug-detail', id: log.rawLogId! });
-      setRaw(value); if (!value) setStatus('原始记录已清除或超过保留期限。');
+      setRaw(value); if (!value) setStatus('记录已过期或被清除。');
     } catch (error) { setStatus(error instanceof Error ? error.message : '读取失败。'); }
     finally { setLoading(false); }
   }
@@ -46,15 +46,15 @@ function Operation({ log, children, onExport }: { log: OperationLog; children?: 
         <span className={logs.meta}>{time(step.at)} · {levels[step.level]}</span><span>{step.message}</span>
         {step.details && <pre>{JSON.stringify(step.details, null, 2)}</pre>}
       </li>)}</ol>}
-      {!!log.droppedSteps && <p className={styles.notice}>较早的{log.droppedSteps}条步骤已省略，请求明细可查看结构化导出。</p>}
+      {!!log.droppedSteps && <p className={styles.notice}>已省略较早的{log.droppedSteps}条记录。</p>}
       <div className={styles.row}><Button onClick={() => onExport(log.id)}>导出这次操作</Button>
-        {log.rawLogId && <Button disabled={loading} onClick={() => void readRaw()}>查看原始模型记录</Button>}</div>
+        {log.rawLogId && <Button disabled={loading} onClick={() => void readRaw()}>查看 AI 详细内容</Button>}</div>
       {status && <p role="status">{status}</p>}
-      {raw && <details className={logs.raw}><summary>原始模型记录（可能含个人内容）</summary>
-        {raw.truncated && <p>内容超过保存上限，已截断；模型实际接收和生成的内容不受影响。</p>}
+      {raw && <details className={logs.raw}><summary>AI 详细内容</summary>
+        {raw.truncated && <p>部分内容过长，已省略。</p>}
         <p>状态：{statuses[raw.status]} · 服务：{raw.service}</p>
-        <h4>请求输入</h4><pre>{JSON.stringify(raw.input, null, 2)}</pre>
-        <h4>原始输出</h4><pre>{raw.output || '尚无输出'}</pre>{raw.error && <pre>{raw.error}</pre>}
+        <h4>请求内容</h4><pre>{JSON.stringify(raw.input, null, 2)}</pre>
+        <h4>回复内容</h4><pre>{raw.output || '暂无回复'}</pre>{raw.error && <pre>{raw.error}</pre>}
       </details>}{children}
     </div>
   </details>;
@@ -88,7 +88,7 @@ export function DebugLogs() {
   async function act(work: () => Promise<void>) {
     setBusy(true); setStatus('');
     try { await work(); await refresh(); }
-    catch (error) { setStatus(error instanceof Error ? error.message : '调试日志操作失败。'); }
+    catch (error) { setStatus(error instanceof Error ? error.message : '日志操作失败。'); }
     finally { setBusy(false); }
   }
   async function download(format: 'json' | 'txt', operationId?: string) {
@@ -97,7 +97,7 @@ export function DebugLogs() {
     const link = document.createElement('a'); link.href = url;
     link.download = `bilibuff-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
-    setStatus('调试日志已下载。');
+    setStatus('日志已导出。');
   }
   const ids = new Set(items.map(item => item.id));
   const roots = items.filter(item => !item.parentId || !ids.has(item.parentId));
@@ -110,27 +110,26 @@ export function DebugLogs() {
       {items.filter(child => child.parentId === log.id).sort((a,b) => a.at-b.at).map(renderOperation)}
     </Operation>;
   }
-  return <details className={`${styles.card} ${styles.settingsDetails}`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}><summary>日志与诊断</summary>
-    <p>日常诊断默认记录关键操作结果，仅保存在本机。展开操作可查看步骤、模型调用和错误。</p>
+  return <details className={`${styles.card} ${styles.settingsDetails}`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}><summary>运行日志</summary>
+    <p>记录插件运行情况，方便排查问题。日志仅保存在本机。如需反馈问题请联系开发者。https://github.com/emmm1245/BiliBuff</p>
     <label className={styles.switch}><input type="checkbox" checked={state?.enabled ?? false} disabled={!state || busy}
-      onChange={event => { const enabled = event.target.checked; void act(async () => { await send({ type: 'debug-toggle', enabled }); setStatus(enabled ? '详细模型调试已开启。' : '详细模型调试已关闭，已有日志保留。'); }); }} />记录完整模型输入与输出</label>
-    <p>记录 AI 请求、回复和错误，仅保存在本机，不含密钥。可能包含计划、观看记录和评论，分享前请检查。</p>
-    <p className={styles.notice}>诊断摘要保留7天，最多500条、约2MB；原始模型记录保留3天，最多50条、10MB，输入与输出各最多约26万字符。进行中状态也可能代表后台已中断。</p>
-    <div className={styles.row}><span>{state ? `诊断 ${state.operations} 条 · 模型原始记录 ${state.count} 条` : '正在读取日志…'}</span>
-      <Button disabled={!state || busy} onClick={() => void act(() => download('json'))}>导出完整日志</Button>
-      <Button disabled={!state || busy} onClick={() => void act(() => download('txt'))}>导出易读摘要</Button>
+      onChange={event => { const enabled = event.target.checked; void act(async () => { await send({ type: 'debug-toggle', enabled }); setStatus(enabled ? 'AI 详细记录已开启。' : 'AI 详细记录已关闭，已有日志保留。'); }); }} />记录 AI 详细内容</label>
+    <p className={styles.notice}>仅排查 AI 问题时开启。可能含计划、评论等个人内容，分享前请检查。</p>
+    <div className={styles.row}><span>{state ? `运行记录 ${state.operations} 条 · AI 详细记录 ${state.count} 条` : '正在读取日志…'}</span>
+      <Button disabled={!state || busy} onClick={() => void act(() => download('json'))}>导出日志</Button>
+      <Button disabled={!state || busy} onClick={() => void act(() => download('txt'))}>导出文字摘要</Button>
       <Button disabled={busy} onClick={() => void act(refresh)}>刷新</Button>
-      <Button disabled={!state || busy} onClick={() => void act(async () => { await send({ type: 'debug-clear' }); setPage(0); setStatus('日志已清除，业务缓存和有效冷却保留。'); })}>清除日志</Button>
+      <Button disabled={!state || busy} onClick={() => void act(async () => { await send({ type: 'debug-clear' }); setPage(0); setStatus('日志已清除，其他数据不受影响。'); })}>清除日志</Button>
     </div>
     <div className={logs.filters}>
       <label>功能<select value={feature} onChange={event => { setFeature(event.target.value); setPage(0); }}><option value="">全部功能</option>{[...new Set(items.map(item => item.feature))].sort().map(name => <option key={name}>{name}</option>)}</select></label>
       <label>级别<select value={level} onChange={event => { setLevel(event.target.value); setPage(0); }}><option value="">全部级别</option>{Object.entries(levels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>时间<select value={range} onChange={event => { setRange(event.target.value); setPage(0); }}><option value="1">最近24小时</option><option value="7">最近7天</option></select></label>
-      <label>搜索<input value={query} placeholder="功能、步骤或操作编号" onChange={event => { setQuery(event.target.value); setPage(0); }} /></label>
+      <label>搜索<input value={query} placeholder="搜索日志" onChange={event => { setQuery(event.target.value); setPage(0); }} /></label>
     </div>
     {status && <p role="status">{status}</p>}
     <div aria-live="polite">{filtered.slice(currentPage * 20, (currentPage + 1) * 20).map(renderOperation)}</div>
-    {!filtered.length && <p className={styles.empty}>{items.length ? '没有符合条件的日志。' : '暂无诊断记录，执行功能后会在这里显示。'}</p>}
+    {!filtered.length && <p className={styles.empty}>{items.length ? '没有找到相关日志。' : '暂无日志。'}</p>}
     <div className={styles.row}><span>共{filtered.length}次操作 · 第{currentPage + 1}/{pages}页</span>
       <Button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</Button>
       <Button disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
