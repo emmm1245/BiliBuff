@@ -32,7 +32,7 @@ input,textarea{width:100%;min-width:0;border:1px solid var(--border);background:
 /* 共用：直接展示的适用条件 */
 .generative-summary .summary-condition{background:var(--field);border-radius:7px;padding:9px 11px;color:var(--text);margin:0 0 9px}
 /* 对比：双列对象与差异维度 */
-.summary-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}.summary-choices>div{min-width:0;background:var(--field);border-radius:7px;padding:11px}.summary-choices strong{font-size:14px}.summary-choices p{font-size:11px}.summary-dimension{padding:10px 0;border-bottom:1px solid var(--border)}.summary-dimension:last-child{border:0}.summary-dimension>strong{font-size:11px;font-weight:550}.summary-comparison-values{display:grid;grid-template-columns:1fr 1fr;gap:10px}.summary-comparison-values p{min-width:0;font-size:12px;color:var(--text)}.summary-object{font-size:10px;color:var(--muted)}
+.summary-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}.summary-choices>div{min-width:0;background:var(--field);border-radius:7px;padding:11px}.summary-choices strong{font-size:14px}.summary-choices p{font-size:11px}.summary-dimension{padding:10px 0;border-bottom:1px solid var(--border)}.summary-dimension:last-child{border:0}.summary-dimension>strong{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:550}.summary-comparison-values{display:grid;grid-template-columns:1fr 1fr;gap:10px}.summary-comparison-values p{min-width:0;font-size:12px;color:var(--text)}.summary-object{font-size:10px;color:var(--muted)}
 /* 因果链：节点卡片与关系箭头 */
 .summary-node{background:var(--field);border:1px solid var(--border);border-radius:7px;padding:9px 11px}.generative-summary .summary-relation{text-align:center;font-size:11px;color:var(--accent);margin:5px 0}
 /* 观点依据：表达者与主张 */
