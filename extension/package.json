@@ -2,7 +2,7 @@
   "_comment": "BiliBuff 扩展的依赖和开发、验证、打包命令。",
   "name": "bilibuff-extension",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
