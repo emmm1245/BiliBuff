@@ -70,8 +70,9 @@ export function startCards(initialSettings: ContentSettings, signal: AbortSignal
     .bf-show-reasons .bf-actions { display: flex; justify-content: flex-end; gap: 4px; }
     .bf-show-reasons .bf-peek, .bf-show-reasons .bf-retry { position: static; inset: auto; padding: 3px 6px; }
     .bf-related .bf-show-reasons .bf-details { flex: 1; justify-content: center; }
-    #bf-launcher { position: fixed; right: 16px; bottom: 100px; z-index: 99999; border: 1px solid #22b89a;
-      border-radius: 20px; padding: 9px 14px; background: #20282c; color: #fff; cursor: pointer; font: 14px sans-serif; }
+    #bf-launcher { position: fixed; right: 16px; bottom: 100px; z-index: 99999; border: 1px solid #fb7299;
+      border-radius: 20px; padding: 9px 14px; background: #20282c; color: #fff; cursor: pointer; font: 14px sans-serif;
+      box-shadow: inset 0 0 6px rgb(251 114 153 / 25%), 0 0 6px rgb(251 114 153 / 65%), 0 0 18px rgb(251 114 153 / 40%); }
   `;
   document.head.append(style);
   const launcher = document.createElement('button');
