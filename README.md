@@ -25,10 +25,11 @@
 
 **BiliBuff** 是面向 B 站学习与日常浏览的**效率**与**体验**增强插件。推荐筛选、屏蔽视频、留白首页、观看统计，加上按需使用的 AI计划分析、AI视频助手和AI评论区速读，让找内容、看视频、读评论超丝滑。
 
-当前chrome扩展商店已发布，edge用户也可通过该链接安装扩展
+chrome扩展商店
 <a href="https://chromewebstore.google.com/detail/lapdedhlnlgldnfbedabdpfabhimkdok?utm_source=item-share-cb">BiliBuff - 哔哩哔哩｜B站效率与体验增强插件</a>
 
-edge扩展商店即将发布，敬请期待
+edge扩展商店
+<a href="https://microsoftedge.microsoft.com/addons/detail/bilibuff-%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9%EF%BD%9Cb%E7%AB%99%E6%95%88%E7%8E%87%E4%B8%8E%E4%BD%93%E9%AA%8C%E5%A2%9E%E5%BC%BA/ojodhblmcbbmjgomggnbbjjpbhlkieeo">BiliBuff - 哔哩哔哩｜B站效率与体验增强插件</a>
 
 ![BiliBuff：上 B 站，加个 Buff，AI 总结、评论速读与推荐筛选](docs/images/promotional-banner.png)
 
